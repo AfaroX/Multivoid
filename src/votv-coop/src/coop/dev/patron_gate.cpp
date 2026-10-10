@@ -7,6 +7,7 @@
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile.h"
 #include "ue_wrap/core/ufunction_hook.h"
+#include "ue_wrap/facts/function_row.h"
 
 #include <cstdint>
 
@@ -17,7 +18,9 @@ namespace R = ue_wrap::reflection;
 namespace P = ue_wrap::profile;
 namespace UH = ue_wrap::ufunction_hook;
 
-void* g_fn   = nullptr;   // UFileSDKBPLibrary::GetFilesFromDirectory, once resolved
+UE_FACT_FN(kRowGetFilesFromDirectory, "dev.patron_gate", L"FileSDKBPLibrary", L"GetFilesFromDirectory", Declared);
+
+ue_wrap::facts::Resolved g_fn;   // UFileSDKBPLibrary::GetFilesFromDirectory, once resolved
 bool  g_done = false;     // armed, or given up for a named reason -- either way, stop trying
 bool  g_off = false, g_offRead = false;
 int   g_diagLines = 0;
@@ -55,9 +58,9 @@ void EnsureArmed() {
     if (g_off || g_done) return;
 
     if (!g_fn) {
-        void* cls = R::FindClass(L"FileSDKBPLibrary");
+        void* cls = R::FindClass(kRowGetFilesFromDirectory.Class());
         if (!cls) return;  // the FileSDK plugin's class is not registered yet -- retried on a later call
-        g_fn = R::FindFunction(cls, L"GetFilesFromDirectory");
+        g_fn = ue_wrap::facts::Resolve(kRowGetFilesFromDirectory);
         if (!g_fn) {
             UE_LOGE("patron_gate: FileSDKBPLibrary resolved but GetFilesFromDirectory did not -- the "
                     "Shadow-Test-Build mod gate CANNOT be neutralised (the dll/pak scan stands)");
@@ -71,7 +74,7 @@ void EnsureArmed() {
                 "patron Shadow-Test-Build 'Modded client detected!' gate is neutralised. LOCAL port-prep "
                 "instrument ([dev] patron_mod_gate_bypass); it never ships and edits no game file.");
     } else {
-        UE_LOGE("patron_gate: the GetFilesFromDirectory Func patch did not install (fn=%p) -- gate stands", g_fn);
+        UE_LOGE("patron_gate: the GetFilesFromDirectory Func patch did not install (fn=%p) -- gate stands", g_fn.Fn());
         g_done = true;
     }
 }
