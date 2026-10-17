@@ -986,6 +986,13 @@ enum class ReliableKind : uint8_t {
     // record, gone once opened. Trust: the amount is the host's copy's and the reach the host's pose of the
     // sender; the client names the sack and nothing else. PointSackRedeemPayload.
     PointSackRedeem = 173,
+
+    // Client to host: a fire extinguisher ruptured in this client's world -- its shoot, the burst that
+    // flies it, refused there; the host runs the same verb on its copy within the sender's reach and
+    // streams the flight. Never relayed. Late join: none -- a ruptured extinguisher is its own record
+    // (active, life) on the host. Trust: the host reads its own copy and the sender's pose; the client
+    // names the extinguisher and nothing else. FireExtRupturePayload.
+    FireExtRupture = 174,
 };
 
 #pragma pack(push, 1)
@@ -1848,6 +1855,15 @@ struct PointSackRedeemPayload {
     uint32_t _pad;       // 4  -- zeroed
 };
 static_assert(sizeof(PointSackRedeemPayload) == 40, "PointSackRedeemPayload must be 40 bytes");
+
+// A client's ruptured fire extinguisher (FireExtRupture): the extinguisher by key, the eid as the keyless
+// fallback. Nothing else is trusted: the host runs its own copy's rupture.
+struct FireExtRupturePayload {
+    WireKey  key;        // 32 -- the extinguisher's save Key; len=0 -> keyless, resolve by eid
+    uint32_t elementId;  // 4  -- its Element id, 0 = none
+    uint32_t _pad;       // 4  -- zeroed
+};
+static_assert(sizeof(FireExtRupturePayload) == 40, "FireExtRupturePayload must be 40 bytes");
 
 // The server upgrades lane (ServerUpgradeState). Ops 0 (install) and 1 (take-out) name a box by its
 // servers[] index; op 2, the canonical, carries every box's level in servers[] order (a farm past 64
