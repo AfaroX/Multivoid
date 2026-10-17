@@ -307,6 +307,8 @@ beside the one the drone still carried. The client refuses its own drop the same
 the drone lane's intent kind as its second verb; the host tests the sender's reach to its own drone
 and that the drone carries a sack, then runs the same verb. The sack crosses as a host birth and the
 hasSack change on the state stream that already carries it (`coop/interactables/drone_sack_intent`).
+The drop and the put-on show and hide the sack the drone carries only on the drone that runs them,
+so a client's mirror shows the carried sack's look from the streamed hasSack instead.
 Putting a sack back on the drone has no lane yet: the drone takes it natively wherever it lands.
 
 ### The computer and the economy

@@ -55,6 +55,7 @@ void*   g_activateFn    = nullptr;  // UActorComponent::Activate(bool bReset)
 int32_t g_activeByteOff  = -1;      // UActorComponent::bIsActive, a bitfield byte (what IsActive returns)
 uint8_t g_activeMask     = 0;
 int32_t g_lightAlarmOff = -1;       // Adrone_C::light_alarm @0x0240 (UPointLightComponent*) -- arrival signal light
+int32_t g_sackOff       = -1;       // Adrone_C::sack (the skeletal sack the drone carries) -- the mirror's cargo look
 void*   g_setFloatParamFn = nullptr;// UFXSystemComponent::SetFloatParameter(FName, float) -- dust intensity
 void*   g_setVisFn        = nullptr;// USceneComponent::SetVisibility(bool, bool) -- the signal light
 void*   g_getCompLocFn    = nullptr;// USceneComponent::K2_GetComponentLocation() -- host dust-anchor read
@@ -89,6 +90,7 @@ bool EnsureFxResolved() {
     if (g_audioAlarmOff < 0) g_audioAlarmOff = kAudioAlarmFallback;
     g_lightAlarmOff = R::FindPropertyOffset(g_cls, L"light_alarm");
     if (g_lightAlarmOff < 0) g_lightAlarmOff = kLightAlarmFallback;
+    g_sackOff = R::FindPropertyOffset(g_cls, L"sack");   // no fallback: unresolved leaves the look alone
     g_hasSackOff = R::FindPropertyOffset(g_cls, L"hasSack");
     if (g_hasSackOff < 0) g_hasSackOff = kHasSackFallback;
     g_containerOff = R::FindPropertyOffset(g_cls, L"container");
@@ -325,6 +327,21 @@ void SetSignalLight(void* drone, bool on) {
         f.Set<bool>(L"bNewVisibility", on);
         f.Set<bool>(L"bPropagateToChildren", false);
         Call(light, f);
+    }
+}
+
+void SetSackVisible(void* drone, bool visible) {
+    if (!drone || !EnsureFxResolved() || !g_setVisFn || g_sackOff < 0) return;
+    // dropSack and putSackOn show and hide the carried sack on the machine that runs them, and a
+    // client's mirror runs neither: the host's drone runs them, so the mirror took the look from no
+    // one and kept a sack hanging under a drone that had dropped it. The look follows the streamed
+    // hasSack instead, children included, the sack's physics body and hitbox riding under it.
+    if (void* sack = ReadComp(drone, g_sackOff)) {
+        ParamFrame f(g_setVisFn);
+        if (!f.valid()) return;
+        f.Set<bool>(L"bNewVisibility", visible);
+        f.Set<bool>(L"bPropagateToChildren", true);
+        Call(sack, f);
     }
 }
 
