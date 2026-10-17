@@ -160,6 +160,13 @@ to the generation it names; a client discards an echo for a generation it has al
 - **Retires:** 1.5 -- the lid-class races -- generically, including the consumed-echo case fixed by hand
   in `6aacf8d3`.
 - **Cost:** a wire-format change (a protocol bump), so it belongs with a release.
+- **Outcome (built on `sync/root`):** not built as a new field. Reading the receivers showed the
+  generation already exists under other names: every copy of a prop has its own element id, which
+  `PropDestroy` resolves first; `PropRelease` names the hold it closes (`holdGen`) and `PropDriveEnd`
+  the claim it closes; a drop intent, its record and its destroy share one ordered lane; and the
+  consumed-echo check sits in the general destroy seam, so it covers every client destroy, not only
+  the lid. A protocol bump would add risk without retiring a bug the logs show. What remains is
+  measured by step 0's snapshots before anything more is built.
 
 ### Step 5 -- The right copy answers each event
 
