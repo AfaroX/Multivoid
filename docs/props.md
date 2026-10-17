@@ -97,6 +97,14 @@ performs (`coop/props/prop_drop_intent`):
   is a fact only that instant holds, since the VM still has the calling Blueprint frame there
   (`coop/props/prop_spawn_authoring`). Such a birth crosses as an ordinary drop intent and is NOT
   slept on the host -- it was dropped at the player's aim and must fall there as it falls here.
+- **A place lost before the host answers.** The intent goes out a tick after the place, so the
+  placed actor can be gone before the host's spawn comes back: a lid thrown onto a reel case is taken
+  by the case as it lands, and a prop dropped and picked straight up again is pocketed. Its destroy
+  crosses after the intent, the host takes it as an echo of its own copy and tells nobody, and its
+  spawn reached the client as a second prop beside the one the case took. The client tracks each
+  intent in flight with the actor it was authored from; when that very actor dies before the host's
+  spawn arrives, the spawn is refused and the host's copy retired by its eid, never by the key, which
+  may name another prop by then.
 
 Any other keyed prop a client creates is dropped at that door and never reaches the host: that is
 the world's own churn, which every peer produces for itself.

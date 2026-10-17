@@ -41,9 +41,12 @@
 #include "ue_wrap/facts/function_row.h"
 
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <deque>
+#include <iterator>
 #include <string>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
@@ -105,6 +108,35 @@ void UnparkKey(const std::wstring& key) {
     for (auto it = g_parkFifo.begin(); it != g_parkFifo.end(); ++it) {
         if (*it == key) { g_parkFifo.erase(it); break; }   // at most ONE copy by the invariant
     }
+}
+
+// The intents in flight: a key this client authored a spawn intent for, and the actor it was authored
+// from, until the host's spawn of it comes back. The place reports the prop a tick late, so a device can
+// take that actor in the gap -- a lid thrown onto a reel case is consumed the moment it lands -- and the
+// actor's own destroy then crosses AFTER the intent. The host spawns the prop and expresses it, then
+// takes the destroy as an echo and tells nobody; the spawn reaches this client after its own copy is
+// gone, and stands as a second prop beside the one the device took. `consumed` is set by that destroy,
+// for the very actor the intent was authored from, and read when the host's spawn arrives.
+struct InFlight {
+    void*    actor = nullptr;
+    uint64_t authoredMs = 0;
+    bool     consumed = false;
+};
+std::unordered_map<std::wstring, InFlight> g_inFlight;   // GT-only
+constexpr size_t   kMaxInFlight = 32;
+constexpr uint64_t kInFlightMs  = 10000;   // the host answers within a round trip; this only bounds a lost answer
+
+uint64_t NowMs() {
+    return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count());
+}
+
+void NoteAuthored(const std::wstring& key, void* actor) {
+    const uint64_t now = NowMs();
+    for (auto it = g_inFlight.begin(); it != g_inFlight.end();)
+        it = (now - it->second.authoredMs >= kInFlightMs) ? g_inFlight.erase(it) : std::next(it);
+    if (g_inFlight.size() >= kMaxInFlight && g_inFlight.find(key) == g_inFlight.end()) return;
+    g_inFlight[key] = InFlight{actor, now, false};   // a re-author of the key starts it over
 }
 
 // Fill a fixed-size wire short string (the key and class-name fields share the shape).
@@ -497,6 +529,7 @@ void Tick(coop::net::Session* session) {
         session->SendReliable(freshBirth ? coop::net::ReliableKind::ReelEjectIntent
                                          : coop::net::ReliableKind::PropDropIntent,
                               &p, sizeof(p));
+        NoteAuthored(key, e.actor);
         // The prop's own save record behind the intent, same lane, same FIFO: the host respawns
         // this prop from the intent and would otherwise author a class-default copy -- a blank
         // tape, an empty disc -- and broadcast that as truth.
@@ -525,9 +558,16 @@ void Tick(coop::net::Session* session) {
     g_pending.swap(keep);
 }
 
-void NoteClientKeyedDestroy(const std::wstring& key) {
+void NoteClientKeyedDestroy(const std::wstring& key, void* actor) {
     UE_ASSERT_GAME_THREAD("prop_drop_intent::NoteClientKeyedDestroy");
     if (key.empty() || key == L"None") return;
+    // The actor an intent in flight was authored from died before the host's spawn came back.
+    auto in = g_inFlight.find(key);
+    if (in != g_inFlight.end() && in->second.actor == actor && !in->second.consumed) {
+        in->second.consumed = true;
+        UE_LOGI("[PROP-DROP] CLIENT key='%ls' died after its intent and before the host's spawn -- "
+                "that spawn will be refused here and its copy retired on the host", key.c_str());
+    }
     if (g_parkedKeys.insert(key).second) {
         g_parkFifo.push_back(key);
         while (g_parkFifo.size() > kMaxParked) {
@@ -563,6 +603,26 @@ void OnPropDropIntent(coop::net::Session& session, const coop::net::PropDropInte
                 "-- FinishSpawn watcher broadcasts it this tick",
                 key.c_str(), cls.c_str(), senderSlot, p.locX, p.locY, p.locZ);
     }
+}
+
+bool RefuseConsumedEcho(const std::wstring& key, uint32_t hostEid) {
+    UE_ASSERT_GAME_THREAD("prop_drop_intent::RefuseConsumedEcho");
+    auto in = g_inFlight.find(key);
+    if (in == g_inFlight.end()) return false;
+    const bool consumed = in->second.consumed && NowMs() - in->second.authoredMs < kInFlightMs;
+    g_inFlight.erase(in);   // the host's answer to the intent: in flight no longer, consumed or not
+    if (!consumed) return false;
+    // By eid alone, never the key: the key may already name another prop here or on the host (a save
+    // ships duplicate keys, and a re-place reuses one), and only the copy the host built from our intent
+    // is to go. A host that already took our destroy has none, and this is its no-op.
+    if (coop::net::Session* s = LoadSession(); s && hostEid != 0 && hostEid != coop::element::kInvalidId) {
+        coop::net::PropDestroyPayload dp{};
+        dp.elementId = hostEid;
+        s->SendPropDestroy(dp);
+    }
+    UE_LOGI("[PROP-DROP] CLIENT refused the host's spawn of key='%ls' eid=%u: this client authored it and its own "
+            "copy was consumed before the spawn came back -- the host's copy is retired by eid", key.c_str(), hostEid);
+    return true;
 }
 
 void OnReelEjectIntent(coop::net::Session& session, const coop::net::PropDropIntentPayload& p,
@@ -602,6 +662,7 @@ void OnReelEjectIntent(coop::net::Session& session, const coop::net::PropDropInt
 
 void Reset() {
     UE_ASSERT_GAME_THREAD("prop_drop_intent::Reset");
+    g_inFlight.clear();
     // The drain's session gate normally empties this first; anything still here reached teardown
     // unresolved, and the tally says so rather than losing it.
     for (const PendingPlace& e : g_pending)

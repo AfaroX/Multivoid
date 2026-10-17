@@ -158,7 +158,7 @@ void DestroySeamBody(void* self) {
     // intent, and only for a key whose destroy we just propagated, so the host re-spawn makes
     // exactly one prop. Never reached inside the world-load episode, so join churn never parks.
     if (!keyless && s->role() == coop::net::Role::Client) {
-        coop::prop_drop_intent::NoteClientKeyedDestroy(keyStr);
+        coop::prop_drop_intent::NoteClientKeyedDestroy(keyStr, self);
     }
 }
 

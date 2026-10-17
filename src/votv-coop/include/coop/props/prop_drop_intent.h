@@ -16,6 +16,7 @@
 
 #pragma once
 
+#include <cstdint>
 #include <string>
 
 #include "coop/net/protocol.h"
@@ -39,7 +40,13 @@ void Tick(coop::net::Session* session);
 // park the key so a later same-key place authors a host-authoritative drop intent, and only then.
 // The park is the SAFETY INVARIANT -- it means the host has already destroyed its copy, so the
 // later re-spawn authors exactly ONE host prop and there is no dup. Game thread. Bounded FIFO set.
-void NoteClientKeyedDestroy(const std::wstring& key);
+void NoteClientKeyedDestroy(const std::wstring& key, void* actor);
+
+// CLIENT, on the host's spawn of `key` (host eid `hostEid`): true when it answers an intent this client
+// authored whose own actor has since been destroyed -- taken by a device the tick after the place, or
+// picked up again. The spawn is then refused, and the host's copy retired by eid. Every answer ends the
+// intent's tracking. Game thread.
+bool RefuseConsumedEcho(const std::wstring& key, uint32_t hostEid);
 
 // HOST handler for a received PropDropIntent: spawn the authoritative Aprop_C by Key at the
 // transform, NOT echo-suppressed, so the host's own FinishSpawn watcher expresses it and broadcasts

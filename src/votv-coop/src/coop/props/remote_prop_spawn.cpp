@@ -20,6 +20,7 @@
 #include "coop/player/players_registry.h"  // kMaxPeers (the hand-axis buffer)
 #include "coop/props/pile_look.h"
 #include "coop/props/pile_spawn_bind.h"  // the pile's spawn-time twin destroy and adopt
+#include "coop/props/prop_drop_intent.h"  // RefuseConsumedEcho: the answer to a place lost before it
 #include "coop/props/join_membership_sweep.h"  // the claim set and the divergence sweep
 #include "coop/dev/spawn_order_probe.h"  // the keyless load-spawn coverage probe
 #include "coop/dev/join_window_pos_trace.h"  // the keyed-prop join-window position trace
@@ -236,6 +237,13 @@ void OnSpawn(const coop::net::PropSpawnPayload& payload, int senderSlot,
                                                 /*holdUntilQuiescence=*/payload.hasMatchPos != 0);
         }
         if (outSpawned) *outSpawned = mirror;
+        return;
+    }
+    // The host's answer to a place this client authored and then lost -- a device took the placed
+    // actor the tick after the intent went out, or the player picked it up again. Its own copy is gone,
+    // so this spawn would stand as a second one; it is refused, and the host's copy retired by eid.
+    if (senderSlot == 0 && !coop::prop_element_tracker::SessionIsHost() &&
+        coop::prop_drop_intent::RefuseConsumedEcho(keyW, payload.elementId)) {
         return;
     }
     // The dedupe: a local Aprop_C with the same Key already exists (both peers loaded the same
