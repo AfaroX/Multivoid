@@ -70,7 +70,7 @@ bool TakeToken(uint8_t slot) { return g_rate[slot].rate.Take(kPressBudget, coop:
 // mid-join window rather than a verdict, which the door-verb, keypad and container lanes wait out the
 // same way (principle 8): a press made in it is not lost.
 bool Execute(coop::net::Session& s, const coop::net::DroneFlyIntentPayload& p, uint8_t slot) {
-    (void)p;  // verb 0 is the only face with a lane; the dispatcher refuses the rest
+    (void)p;  // verb 0 is this lane's; the dispatcher routes the drop-sack verb to its own lane
     // The console carries no identity to name, so the sender's reach IS the resolve: of this
     // world's consoles, the one the sender is standing at. Any of them calls the same drone, so
     // the first within reach is the press.

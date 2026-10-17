@@ -774,7 +774,9 @@ enum class ReliableKind : uint8_t {
     // on the host, and a sender's presses run no faster than a bounded rate from a bounded queue.
     // The host runs the button's own verb, drone.triggerFly, whose body owns every condition, and
     // the flight reaches the peers on the pose stream that already carries it. Late join: nothing
-    // to replay, since a press the host has not run changed nothing.
+    // to replay, since a press the host has not run changed nothing. Verb 1 is the drone's own
+    // drop-sack, refused on a client's mirror the same way and run on the host's drone after a reach
+    // test and a test that it carries a sack (coop/interactables/drone_sack_intent).
     // DroneFlyIntentPayload.
     DroneFlyIntent = 145,
 
@@ -2916,10 +2918,13 @@ static_assert(sizeof(GrabRefusedPayload) == 8, "GrabRefusedPayload must be 8 byt
 // console carries no identity to name (see the kind's comment), so the host resolves the console
 // the sender stands at and re-tests the lid there.
 struct DroneFlyIntentPayload {
-    uint8_t verb;        // 0 = the keyboard's call-or-send; the leave-timer face has no lane yet
+    uint8_t verb;        // 0 = the keyboard's call-or-send; 1 = the drone's drop-sack; the leave-timer face has no lane yet
     uint8_t _pad[7];     // 8-byte alignment; bytes beyond the verb zero
 };
 static_assert(sizeof(DroneFlyIntentPayload) == 8, "DroneFlyIntentPayload must be 8 bytes");
+// The drone lane's second verb: a client's drop of the sack the drone carries
+// (coop/interactables/drone_sack_intent), run on the host's drone.
+inline constexpr uint8_t kDroneVerbDropSack = 1;
 static_assert(sizeof(DroneFlyIntentPayload) <= 256 - 20 - 8,
               "DroneFlyIntentPayload must fit one datagram");
 
