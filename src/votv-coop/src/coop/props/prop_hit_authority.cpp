@@ -18,6 +18,7 @@
 
 #include "ue_wrap/actors/prop.h"               // IsDescendantOfProp, GetInteractableKeyString, GetStaticMesh
 #include "ue_wrap/core/call.h"
+#include "ue_wrap/core/hot_path_guard.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/script_gate.h"
