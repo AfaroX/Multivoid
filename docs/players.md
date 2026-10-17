@@ -157,6 +157,16 @@ this machine, so a false death of the copy reaches the same travel: that one is 
 the revive can do, and this machine's player is not revived for it; only the black screen the
 copy's chain put up is cleared.
 
+The travel is the chain's last step, and the chain starts earlier: every ragdoll cause -- a slip
+on a banana husk, a fall, a blast, a wisp -- runs the game's own ragdoll verb, and that verb ends
+in the function that writes the dead flag, the black screen and the travel. A puppet is a player
+body with a collision capsule, so the game reaches it with those causes on every machine that
+shows it, and a peer slipping somewhere else ran the death chain against this machine's own
+state. The verb is refused on a peer's puppet (`coop/player/puppet_ragdoll_guard`), so none of
+those steps runs here: the puppet's flop is the owner's to stream, our own faint display never
+asks the verb of a puppet, and the travel refusal stays for the false deaths that reach it
+without a ragdoll.
+
 A refused run-ending is answered with a revive in its place: the position at the base gate,
 health, the dead flag, the ragdoll, the pause an ending set, and the screen artifacts the travel
 used to dispose of -- the damage quadrants, the red overlay and the blood-loss effect
@@ -301,6 +311,7 @@ dead peer through the ragdoll bit of its next pose.
 | No chat line announces a death | `[V]` `coop/comms/chat_sync` carries no such kind |
 | After a revive the player can drift horizontally from the base gate, metres over seconds; the cause is unmeasured | `[V]` `harness/autotest/death_state_probe.cpp` reads the position back |
 | Damage a puppet takes on another machine is dropped by design; only the victim's own contacts count | `[V]` `coop/player/player_damage` |
+| A puppet's refused ragdoll leaves the body's own impulse behind: a slip's `punch` still shoves a puppet whose pose its owner authors, and the next correction erases it | `[V]` `coop/player/puppet_ragdoll_guard` refuses the ragdoll verb alone |
 | A third-party bundle pak cannot be discovered: bundle membership is a fixed table | `[V]` `coop/player/skin_registry` |
 | A ban is by player id and, on a direct link, by address: a banned player with a new identity key who comes from a new address or through a relay is a new player, and an address ban refuses whoever shares that address | `[V]` `coop/moderation/ban_list` |
 | The connection cap is by address too, so players behind one router share it; over a relayed internet route it counts by the identity a peer proves, so a peer that rotates its identity there gets a fresh count each time | `[V]` `coop/net/connect_history` on the direct lane; `[RD]` on the internet lane, from the transport's source |
@@ -316,7 +327,7 @@ dead peer through the ragdoll bit of its next pose.
 | name, colour, nameplate | `coop/player/nameplate`, `coop/player/nick_color`, `ui/hud`, `ui/scoreboard` |
 | skins | `coop/player/client_model`, `coop/player/skin_registry`, `coop/player/skin_effects`, `coop/player/local_body`, `coop/player/skin_preview`, `ui/skins_panel`, `assets/paks/` |
 | held and toggled items | `coop/player/hand_item`, `coop/player/item_activate`, `coop/player/flashlight_click_sound` |
-| damage and death | `coop/player/player_damage`, `coop/player/death_revive`, `coop/player/run_end_travel`, `coop/player/ragdoll_gate` |
+| damage and death | `coop/player/player_damage`, `coop/player/death_revive`, `coop/player/run_end_travel`, `coop/player/ragdoll_gate`, `coop/player/puppet_ragdoll_guard` |
 | sleep | `coop/player/sleep_sync` |
 | inventory | `coop/items/player_inventory_sync` |
 | moderation | `coop/moderation/moderation`, `coop/moderation/ban_list`, `coop/moderation/seen_players` |
