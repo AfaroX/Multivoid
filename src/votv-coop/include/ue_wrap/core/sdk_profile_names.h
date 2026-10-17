@@ -19,6 +19,9 @@ inline constexpr const wchar_t* MainGamemodeTransitionFn = L"transition";
 inline constexpr const wchar_t* ActorClass = L"Actor";
 inline constexpr const wchar_t* WorldClass = L"World";
 inline constexpr const wchar_t* SetActorLocationFn = L"K2_SetActorLocation";
+// The same move in one call, without a teleport: a kinematic body is given a target, so it carries
+// what rests on it (ue_wrap::engine::MoveActorKinematic).
+inline constexpr const wchar_t* SetActorLocationAndRotationFn = L"K2_SetActorLocationAndRotation";
 inline constexpr const wchar_t* GameplayLevel = L"untitled_1";
 
 // The checkpoint spawn point at the base entrance (the actor centre, world cm; re-derive per game

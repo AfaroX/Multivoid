@@ -102,6 +102,11 @@ FVector GetActorVelocity(void* actor);
 // AActor::K2_SetActorLocation (bSweep=false, bTeleport=true: a snap). Game thread.
 bool SetActorLocation(void* actor, const FVector& location);
 
+// AActor::K2_SetActorLocationAndRotation (bSweep=false, bTeleport=false): a move, not a snap. A
+// kinematic body gets a target and so carries what rests on or in it. False when the call did not
+// run; the caller keeps its own fallback. Game thread.
+bool MoveActorKinematic(void* actor, const FVector& location, const FRotator& rotation);
+
 // AActor::K2_SetActorRotation (bTeleportPhysics=true). Game thread.
 bool SetActorRotation(void* actor, const FRotator& rotation);
 

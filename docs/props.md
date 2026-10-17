@@ -139,8 +139,12 @@ picks the subject on its own, which today is the client's pile cone described in
 While a prop is held, its holder owns it. The holder streams the held prop's world transform every
 frame, unreliable and newest-wins, under a generation it mints at the grab
 (`coop/player/local_streams`). A receiver resolves the prop by key, turns its physics off, and
-follows the stream with a fixed-delay snapshot interpolation that renders one interval behind the
-newest pose on its own clock (`coop/props/remote_prop`, `coop/props/active_drive`). A grab changes
+goes to each pose as it arrives (`coop/props/remote_prop`, `coop/props/active_drive`). The first pose
+of a hold and a jump past 5 m place the copy; the steady stream moves it, a kinematic move rather than
+a teleport, so the parked body has the frame's velocity and carries what rests on or in it. A stack
+in a carried bucket is kept by plain physics on the carrier's machine -- an open container glues
+its contents only once they come to rest, and lets go of them when it is woken or tipped -- and a
+teleported copy left the stack behind, spilled on every other peer. A grab changes
 the prop as well as moving it, on the grabbing machine only: the base prop's grab prelude clears its
 lifespan, broadcasts that it was touched and wakes and unfreezes it, and a prop carrying the
 wall-attach component runs the component's unstick instead. So the first pose of a hold runs the
@@ -316,6 +320,7 @@ prop resolves.
 | A prop tied by any hook -- a player's, an anchored one, the level's own -- is parked on every client for as long as the tie holds, since the host streams it, so it cannot be grabbed there until the hook lets go. A joiner parks one at rest on the host's ready-edge re-send, a single unreliable datagram: lost, it leaves that prop unparked there until it moves | `[V]` `coop/items/hook_prop_claim` claims every tied prop on the host every pass; `coop/props/prop_drive_stream` parks it; `coop/props/prop_drive_host` re-sends at the ready edge |
 | A wall-attachable whose stick replay finds no surface here is frozen in place without the attach, so when the thing it stuck to is destroyed it stays in the air here while every other copy falls | `[V]` `coop/props/prop_stick_sync`'s fallback writes the flag without the component's attach or its destroy binding; `[RD]` the stick carries no parent |
 | A prop the driven-prop channel set coasting can come to rest a few centimetres from the host's copy: the host ends a coasting stream half a second after the prop stops moving, before its body sleeps, and the end edge sets the client's copy to the host's pose and hands it back its physics, so each copy settles on its own. The broom drill measured 0 to 6.4 cm, and 12.1 cm for a prop whose support another prop knocked away on the host | `[V]` `coop/props/prop_drive_host` (`kRestMs`), `coop/props/prop_drive_stream` (the end edge restores simulation per `coop/props/prop_wire_parity`); the broom drill's push and dispense phases |
+| A prop another player holds is a moving body on every peer, so it pushes what it touches there too: on the host those pushes are the authoritative world, and the props a client's copy pushed stay where it pushed them on that client, since a knock has no lane | `[V]` `coop/props/active_drive` moves the parked copy with `ue_wrap::engine::MoveActorKinematic`; the knock row below |
 | A prop that a pushed prop knocks moves on the host only: the driven-prop channel is fed by verbs, and a knock is none. One drill run measured a knocked prop moving 25.1 cm on the host and resting 15.9 cm from the client's copy | `[V]` the broom drill's push phases (`harness/autotest/autotest_broomstroke.cpp`); `coop/items/broom_push` streams only what a stroke itself pushed |
 | A prop parked under the host's drive cannot be grabbed on a client while the drag lasts: the park turns the body kinematic and the game's grab needs a simulating one. It is grabbable again after the end edge | `[V]` `coop/props/prop_drive_stream` parks by switching the mesh's simulation off (`ue_wrap/engine/engine_physics`); `coop/props/prop_wire_parity` records why a kinematic mirror is ungrabbable |
 | A pose can arrive milliseconds before the spawn that names its prop; that is a race, not a defect, and a ledger tells the two apart instead of warning per packet | `[V]` `coop/props/unresolved_pose_ledger` |
