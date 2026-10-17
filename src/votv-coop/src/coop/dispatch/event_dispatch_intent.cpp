@@ -28,6 +28,7 @@
 #include "coop/items/coingun_sync.h"
 #include "coop/items/point_sack_intent.h"  // CLIENT->HOST an opened point sack
 #include "coop/items/fireext_rupture.h"
+#include "coop/props/prop_hit_authority.h"
 #include "coop/items/order_queue_sync.h"  // HOST->CLIENT the delivery order queue
 #include "coop/items/order_sync.h"
 #include "coop/props/pack_trash_intent.h"  // CLIENT->HOST bagging of a pile or clump
@@ -388,6 +389,20 @@ bool HandleIntentEvent(net::Session& session,
         net::FireExtRupturePayload p{};
         std::memcpy(&p, msg.payload, sizeof(p));
         coop::fireext_rupture::OnRupture(session, p, static_cast<uint8_t>(msg.senderPeerSlot));
+        break;
+    }
+    case net::ReliableKind::PropHitIntent: {
+        // CLIENT->HOST: a client's player hit a prop it does not hold; the host runs the damage on its copy.
+        // Never relayed.
+        if (session.role() != net::Role::Host || msg.senderPeerSlot < 1 || msg.senderPeerSlot >= net::kMaxPeers ||
+            msg.payloadLen < sizeof(net::PropHitIntentPayload)) {
+            UE_LOGW("event_feed: PropHitIntent dropped (role, sender slot %d or length %zu)", msg.senderPeerSlot,
+                    static_cast<size_t>(msg.payloadLen));
+            break;
+        }
+        net::PropHitIntentPayload p{};
+        std::memcpy(&p, msg.payload, sizeof(p));
+        coop::props::prop_hit_authority::OnHitIntent(session, p, static_cast<uint8_t>(msg.senderPeerSlot));
         break;
     }
     case net::ReliableKind::EraserPressIntent: {

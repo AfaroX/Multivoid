@@ -759,3 +759,5 @@ CFG_FLAG(selftest_break_action_log, "selftest_break_action_log", "dev", false, "
     "no record, so it must fail.")
 CFG_FLAG(desync_audit, "desync_audit", "dev", false, "VOTVCOOP_DESYNC_AUDIT",
     "Diagnostic (both roles): once a minute of the shared clock, append every keyed prop this peer holds -- position, rotation, physics state, what moves it, and a digest of its own save record -- to multivoid-desync.txt beside the game, with the client births that never reached the host counted by class and calling function. tools/desync_compare.py over the host's file and a client's names what diverged.")
+CFG_FLAG(prop_hit_authority_off, "prop_hit_authority_off", "dev", false, "VOTVCOOP_PROP_HIT_AUTHORITY_OFF",
+    "Turns off the rule that only the copy answerable for a prop -- its holder's while held, the host's otherwise -- runs that prop's damage and impact entries, and that a client's swing at a prop it does not hold is run by the host. Set, every copy answers every knock and hit again, as before the rule.")

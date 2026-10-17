@@ -54,6 +54,10 @@ CallerFrame CurrentCallerFrame();
 // player here. False outside a post callback. Game thread.
 bool CallerChainRunsOn(const void* object, int maxDepth = 64);
 
+// The same walk from a frame the caller holds, such as a script_gate call's own stack: true when
+// `object` runs that frame or any frame on its caller chain. Game thread, while the frame is live.
+bool FrameChainRunsOn(const void* frame, const void* object, int maxDepth = 64);
+
 // The result storage of the call a post callback is reporting, the native function's RESULT_PARAM.
 // The caller reads it once the callback returns, so a callback that writes a value of the
 // function's return type there answers the call with that value: how a seam gives a read a

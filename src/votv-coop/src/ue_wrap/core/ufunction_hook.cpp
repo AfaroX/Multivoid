@@ -276,12 +276,16 @@ bool ReadPreSignature(void* ufunction, Slot& into) {
 CallerFrame CurrentCallerFrame() { return t_frame; }
 
 bool CallerChainRunsOn(const void* object, int maxDepth) {
+    return FrameChainRunsOn(t_stack, object, maxDepth);
+}
+
+bool FrameChainRunsOn(const void* frame, const void* object, int maxDepth) {
     if (!object) return false;
     // FFrame::PreviousFrame links each script frame to the one that called it, up to the frame a
     // ProcessEvent opened; every frame on the chain is a live stack object for as long as the call
     // the callback reports is running. The depth bound and the pointer test keep a corrupt link from
     // walking off into memory.
-    void* fr = t_stack;
+    void* fr = const_cast<void*>(frame);
     for (int d = 0; fr && d < maxDepth; ++d) {
         const uintptr_t p = reinterpret_cast<uintptr_t>(fr);
         if (p < 0x10000 || (p & 7) != 0 || p >= 0x00007FFFFFFFFFFFull) return false;

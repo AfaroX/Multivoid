@@ -234,6 +234,18 @@ on the driven-prop channel, which streams it until it rests and ends with the ho
 (`coop/props/knock_stream`). A carried prop's copy moves rather than teleports on every peer, so what a
 client's carried prop pushes over on the host streams the same way.
 
+### Who answers a hit
+
+Every peer runs every prop's whole Blueprint, so a hit once ran its damage on whichever copy felt it: a
+client's copy of a prop at rest broke or burst there alone, and the host's copy of a prop a client
+carries felt that prop's knocks a second time. Every prop's damage starts at `addDamage` (a swing, an
+explosion), `receivedPhyiscsDamage` or `impactDamageCPP` (a physics contact), and those three run only
+on the copy answerable for the prop: the holder's while a player holds it, the host's otherwise
+(`coop/props/prop_hit_authority`). A client's own swing at a prop it does not hold is refused on its
+copy and named to the host (`PropHitIntent`), which runs the same `addDamage` on its copy within the
+sender's reach. What the damage changes crosses on the prop's record, its stream or its destroy.
+`[dev] prop_hit_authority_off=1` turns the rule off.
+
 ### Sticking to a wall
 
 A prop sticks through its wall-attach component, which the wall-attachable props (the cameras, the
@@ -303,7 +315,8 @@ and not the burst's spray or sound, which run in the ruptured copy's own tick.
 |---|---|---|
 | a prop at rest: existence, transform, physics | the host | the birth broadcast; a client's births are intents |
 | a held prop | the holder | a per-frame stream under a generation the grab mints; the release carries the transform, the velocity and the frozen and sleep flags, and closes the generation |
-| a thrown prop after release | each peer's physics, from the same velocity | no stream in flight |
+| a thrown prop after release | the host | the release's velocity starts the host's copy, and the driven-prop stream carries its flight until it rests |
+| a prop's damage | the holder while held, the host otherwise | refused on every other copy; a client's swing at a prop it does not hold is an intent |
 | a prop a hook drags, and one still sliding after the hook lets go | the host | a per-tick stream while it moves; the end edge hands the velocity back |
 | a prop's key | the game, once; the host's copy wins on a mirror | never rewritten on the owner |
 | container contents | the host | slices of its object array; an extraction is an intent |
@@ -325,6 +338,7 @@ and not the burst's spray or sound, which run in the ruptured copy's own tick.
 | `PropSnapPos` | the host to one joiner | a position correction for a save-authoritative prop moved in the join window, with a keyed prop's frozen and sleep |
 | `ContainerState`, `ContainerContents` | the presser; the host | open or closed; one slice of the host's object array |
 | `InventoryPickup` | each peer, relayed | the pocket blip, so others hear a pickup |
+| `PropHitIntent` | a client to the host | its player's swing at a prop it does not hold: the prop, the amount, the impact point and vector |
 
 ## Late join
 

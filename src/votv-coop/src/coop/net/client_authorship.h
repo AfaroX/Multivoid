@@ -131,6 +131,7 @@ constexpr ClientAuthorship AuthorshipOf(ReliableKind k) {
     case ReliableKind::StatQueryReply:
     case ReliableKind::PointSackRedeem:
     case ReliableKind::FireExtRupture:
+    case ReliableKind::PropHitIntent:
         return ClientAuthorship::Client;
     case ReliableKind::EntitySpawn:
     case ReliableKind::EntityDestroy:

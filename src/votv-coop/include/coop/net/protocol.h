@@ -993,6 +993,13 @@ enum class ReliableKind : uint8_t {
     // (active, life) on the host. Trust: the host reads its own copy and the sender's pose; the client
     // names the extinguisher and nothing else. FireExtRupturePayload.
     FireExtRupture = 174,
+
+    // Client to host: this client's player hit a prop it does not hold -- a swing's addDamage, refused on
+    // the client's copy because the host's copy answers a prop at rest; the host runs the same damage on
+    // its copy within the sender's reach. Never relayed. Late join: none -- what the damage changed is the
+    // prop's own record or its destroy. Trust: the host reads its own copy and the sender's pose; the
+    // amount and the point are the swing's, bounded on arrival. PropHitIntentPayload.
+    PropHitIntent = 175,
 };
 
 #pragma pack(push, 1)
@@ -1864,6 +1871,19 @@ struct FireExtRupturePayload {
     uint32_t _pad;       // 4  -- zeroed
 };
 static_assert(sizeof(FireExtRupturePayload) == 40, "FireExtRupturePayload must be 40 bytes");
+
+// A client player's hit on a prop (PropHitIntent): the prop by key, the eid as the keyless fallback, and the
+// swing's own addDamage arguments the host re-runs it with.
+struct PropHitIntentPayload {
+    WireKey  key;                        // 32 -- the prop's save Key; len=0 -> keyless, resolve by eid
+    uint32_t elementId;                  // 4  -- its Element id, 0 = none
+    float    damage;                     // 4  -- addDamage's damage
+    float    pointX, pointY, pointZ;     // 12 -- the hit's impact point (world cm)
+    float    impactX, impactY, impactZ;  // 12 -- addDamage's impact vector
+    uint8_t  skipSetting;                // 1  -- addDamage's skipSetting
+    uint8_t  _pad[3];                    // 3  -- zeroed
+};
+static_assert(sizeof(PropHitIntentPayload) == 68, "PropHitIntentPayload must be 68 bytes");
 
 // The server upgrades lane (ServerUpgradeState). Ops 0 (install) and 1 (take-out) name a box by its
 // servers[] index; op 2, the canonical, carries every box's level in servers[] order (a farm past 64
