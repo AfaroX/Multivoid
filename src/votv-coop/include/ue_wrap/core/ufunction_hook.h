@@ -48,6 +48,12 @@ struct CallerFrame {
 };
 CallerFrame CurrentCallerFrame();
 
+// Whether `object` runs any script frame on the chain that reached the call a post callback reports:
+// the calling frame, its caller, and so on up to the frame a ProcessEvent opened, at most `maxDepth`
+// frames. A spawn issued from a pile's function that the player's own ubergraph called names the
+// player here. False outside a post callback. Game thread.
+bool CallerChainRunsOn(const void* object, int maxDepth = 64);
+
 // The result storage of the call a post callback is reporting, the native function's RESULT_PARAM.
 // The caller reads it once the callback returns, so a callback that writes a value of the
 // function's return type there answers the call with that value: how a seam gives a read a

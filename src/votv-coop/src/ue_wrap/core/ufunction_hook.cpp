@@ -113,6 +113,7 @@ thread_local bool t_inCb = false;
 // exactly as long as the callback runs (CurrentCallerFrame, CurrentResult).
 thread_local CallerFrame t_frame{nullptr, nullptr};
 thread_local void*       t_result = nullptr;
+thread_local void*       t_stack = nullptr;   // the reported call's FFrame, for the chain walk
 
 inline void* ReadPtr(void* base, size_t off) {
     return *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(base) + off);
@@ -140,7 +141,9 @@ void __fastcall NativeThunk(void* context, void* stack, void* result) {
     t_inCb = true;
     t_frame = frame;
     t_result = result;
+    t_stack = stack;
     const int rc = RunCbSEH(s.cb, context, srcObj, spawned);
+    t_stack = nullptr;
     t_result = nullptr;
     t_frame = CallerFrame{nullptr, nullptr};
     t_inCb = false;
@@ -271,6 +274,22 @@ bool ReadPreSignature(void* ufunction, Slot& into) {
 }  // namespace
 
 CallerFrame CurrentCallerFrame() { return t_frame; }
+
+bool CallerChainRunsOn(const void* object, int maxDepth) {
+    if (!object) return false;
+    // FFrame::PreviousFrame links each script frame to the one that called it, up to the frame a
+    // ProcessEvent opened; every frame on the chain is a live stack object for as long as the call
+    // the callback reports is running. The depth bound and the pointer test keep a corrupt link from
+    // walking off into memory.
+    void* fr = t_stack;
+    for (int d = 0; fr && d < maxDepth; ++d) {
+        const uintptr_t p = reinterpret_cast<uintptr_t>(fr);
+        if (p < 0x10000 || (p & 7) != 0 || p >= 0x00007FFFFFFFFFFFull) return false;
+        if (ReadPtr(fr, P::off::FFrame_Object) == object) return true;
+        fr = ReadPtr(fr, P::off::FFrame_PreviousFrame);
+    }
+    return false;
+}
 
 void* CurrentResult() { return t_result; }
 

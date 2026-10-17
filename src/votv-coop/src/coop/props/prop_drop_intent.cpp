@@ -8,6 +8,7 @@
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/player/hand_item.h"          // LocalHandActor (place detect: exclude the hand display)
+#include "coop/player/local_streams.h"       // LastHeldActor: a player-caused birth already in the hand
 #include "coop/props/prop_echo_suppress.h"  // IsMirrorSpawn (exclude host-echo adopt spawns)
 #include "coop/props/join_membership_sweep.h"// RecordSelfAuthored (a player's own prop is never divergence)
 #include "coop/props/prop_lifecycle.h"      // IsPerPlayerPropClass / IsWireSuppressedPropClass (the host gate)
@@ -18,7 +19,6 @@
 #include "coop/props/prop_key_index.h"  // a key on the wire to a live actor
 #include "coop/props/container_contents_sync.h"  // TakeObjInFlight -- mark a container-extraction birth
 #include "coop/props/container_birth.h"           // a thrown container's birth slice
-#include "coop/items/shovel_scrap.h"              // InFlight: a birth inside a client's shovel bodies
 #include "coop/session/world_load_episode.h"  // InEpisode (quiet during the join loadObjects churn)
 #include "ue_wrap/core/call.h"                   // ParamFrame + Call (setKey on the host re-spawn)
 #include "ue_wrap/engine/engine.h"                 // BeginDeferredSpawn/FinishDeferredSpawn/SetActorScale3D
@@ -87,10 +87,11 @@ struct PendingPlace {
     // unmarked birth here is. Read at the seam because that is the only moment the VM still holds
     // the calling frame.
     bool    playerSpawn = false;
-    // True when the birth happened inside a client's shovel bodies, the pile's turnIntoScrap or the
-    // player's throwShovelItem (coop/items/shovel_scrap): the scrap a dig makes, admitted at drain as an
-    // ordinary drop intent, as a container extraction's item is.
-    bool    shovelScrap = false;
+    // True when this machine's own player runs a frame on the birth's call chain
+    // (prop_spawn_authoring::BirthIsLocalPlayerCaused): a shovel's scrap, a tool's output, whatever an
+    // interaction drops. Admitted at drain as an ordinary drop intent, as a container extraction's item is;
+    // what the world's own spawners make on each peer carries no such frame and stays per-peer.
+    bool    playerCaused = false;
     // [dev] The Blueprint function that spawned it, kept only while the desync snapshots run.
     std::wstring caller;
 };
@@ -261,14 +262,14 @@ void OnClientFinishSpawn(void* /*context*/, void* /*srcObj*/, void* result) {
             actor, R::ClassNameOf(actor), ue_wrap::prop::GetInteractableKeyString(actor),
             fromContainerExtract);
     }
-    const bool fromShovel = coop::shovel_scrap::InFlight();
+    const bool fromPlayer = coop::prop_spawn_authoring::BirthIsLocalPlayerCaused();
     g_pending.push_back(PendingPlace{actor, R::InternalIndexOf(actor), 0, fromContainerExtract,
-                                     playerAuthored, fromShovel,
+                                     playerAuthored, fromPlayer,
                                      coop::dev::desync_audit::CallerName()});
     if (fromContainerExtract)
         UE_LOGI("[PROP-DROP] CLIENT enqueued container-EXTRACT birth actor=%p (admitted at drain)", actor);
-    if (fromShovel)
-        UE_LOGI("[PROP-DROP] CLIENT enqueued SHOVEL birth actor=%p cls='%ls' (admitted at drain)", actor,
+    if (fromPlayer && !fromContainerExtract && !playerAuthored)
+        UE_LOGI("[PROP-DROP] CLIENT enqueued PLAYER-CAUSED birth actor=%p cls='%ls' (admitted at drain)", actor,
                 R::ClassNameOf(actor).c_str());
     if (playerAuthored) {
         // The mid-join answer (principle 8), and it is owed HERE rather than at the drain. The
@@ -518,7 +519,14 @@ void Tick(coop::net::Session* session) {
         // NOT a freshBirth: that kind means a device put an item in a hand and sleeps the host's
         // copy, while a menu prop is dropped in the world at the player's aim and must fall on the
         // host exactly as it falls here -- the transform block below sends its real physics state.
-        if (!parked && !freshBirth && !e.containerExtract && !e.playerSpawn && !e.shovelScrap) {
+        // A player-caused birth the player already holds is the held-prop lane's: an item an interaction
+        // hands straight to the hand crosses on the hold's own broadcast, and an intent beside it would be a
+        // second copy.
+        if (e.playerCaused && e.actor == coop::local_streams::LastHeldActor()) {
+            probe::NoteDrainExit(e.actor, "player-caused-held", e.tries, key);
+            continue;
+        }
+        if (!parked && !freshBirth && !e.containerExtract && !e.playerSpawn && !e.playerCaused) {
             probe::NoteDrainExit(e.actor, "not-a-place-nor-whitelisted-birth", e.tries, key);
             coop::dev::desync_audit::NoteLocalOnlyBirth(R::ClassNameOf(e.actor), e.caller);
             continue;

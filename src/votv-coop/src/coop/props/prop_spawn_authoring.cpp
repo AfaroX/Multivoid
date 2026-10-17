@@ -2,6 +2,8 @@
 
 #include "coop/props/prop_spawn_authoring.h"
 
+#include "coop/player/players_registry.h"  // Local: the player a birth's call chain may run on
+
 #include "ue_wrap/core/fname_utils.h"     // StringToFName -- the two verb names, once
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/hot_path_guard.h"   // UE_ASSERT_GAME_THREAD
@@ -155,6 +157,11 @@ bool BirthIsPlayerAuthored() {
         return true;
     }
     return false;
+}
+
+bool BirthIsLocalPlayerCaused() {
+    void* local = coop::players::Registry::Get().Local();
+    return local && ue_wrap::ufunction_hook::CallerChainRunsOn(local);
 }
 
 void Reset() {

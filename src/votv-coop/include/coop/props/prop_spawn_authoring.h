@@ -33,6 +33,13 @@ void Install(bool isClient);
 // is every ambient spawn the world makes for itself. Game thread.
 bool BirthIsPlayerAuthored();
 
+// Is the birth the caller is looking at RIGHT NOW caused by this machine's own player: does the local
+// possessed pawn run any script frame on the chain that reached the spawn? The player's input, its hand
+// verbs and the montage notifies they start all run in the player's ubergraph, so a shovel's scrap, a
+// tool's output or an item an interaction drops names the player here, while a spawner, a timer or an
+// impact the world raises on its own does not. Same call site as BirthIsPlayerAuthored. Game thread.
+bool BirthIsLocalPlayerCaused();
+
 // Session teardown: report both columns of the caller tally -- the menu's calls, which crossed as
 // intents, and every other caller's, which stayed local -- and zero it. The watch and the resolved
 // UFunctions stay: they name the game's own classes, not this session's world. Game thread.

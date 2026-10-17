@@ -105,12 +105,13 @@ performs (`coop/props/prop_drop_intent`):
   intent in flight with the actor it was authored from; when that very actor dies before the host's
   spawn arrives, the spawn is refused and the host's copy retired by its eid, never by the key, which
   may name another prop by then.
-- **What a shovel digs.** The shovel's swing calls a chip pile's `turnIntoScrap`, which spawns the
-  pile's scrap and destroys the pile, and the next swing calls the player's `throwShovelItem`, which
-  spawns what the shovel carries and launches it. On a client the pile's destroy crossed and none of
-  its scrap did. A birth inside either body on a client is marked and admitted as a drop intent, as a
-  container extraction's item is (`coop/items/shovel_scrap`); one the shovel takes straight into its
-  load dies before the drain and is never named.
+- **Births a player's actions cause.** A client birth is admitted when this machine's own player runs a
+  frame on the call chain that reached the spawn (`prop_spawn_authoring`, `BirthIsLocalPlayerCaused`):
+  the player's input, its hand verbs and the montage notifies they start all run in the player's
+  ubergraph, so a shovel's scrap (`turnIntoScrap`, `throwShovelItem`), a tool's output or what an
+  interaction drops names the player, while what a spawner, a timer or the world's own impact makes on
+  each peer does not, and stays per-peer. A player-caused birth already in the player's hand at the drain
+  is the held-prop lane's and is not named twice; one that does not outlive the drain is never named.
 - **A place that leaves the hand moving.** A throw from the hand slot is a place too, and the intent
   carries only a transform, so the host built its copy standing still where the hand let go, coasted
   it falling there, and the thrower's own copy, mid-flight, was converged and then streamed back to
