@@ -128,6 +128,7 @@
 #include "coop/props/grab_observer.h"
 #include "coop/player/item_activate.h"
 #include "coop/player/player_damage.h"
+#include "coop/player/puppet_ragdoll_guard.h"
 #include "coop/session/player_handshake.h"  // TickSkinConverge
 #include "coop/player/skin_preview.h"
 #include "coop/net/session.h"
@@ -674,6 +675,7 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     if (isHost) { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:prop_drive_host"}; coop::prop_drive_host::Tick(session); }  // HOST: publish the driven props that moved, close the streams that rested (after the hook poll that feeds it; an empty set costs one size check)
     coop::dev::dev_lanes::TickDrills(session);  // [dev] the drills' and censuses' legs (a single read each when off)
     coop::player_damage::Tick();  // impact-entry PRE cancels lazy install (non-local bodies)
+    coop::puppet_ragdoll_guard::Tick();  // the ragdollMode refusal on a puppet registers once
     coop::player_handshake::TickSkinConverge();  // heal a join-window deferred skin apply (~2 s throttle)
     coop::skin_preview::Tick();  // F1-skins live mannequin preview (spawn/apply/position/hide)
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:laptop_tab"}; coop::laptop_tab::Tick(session); }  // the tab watches until live, the refusal window, and a tab report owed by its pace; BEFORE the occupancy poll, so a leaving user's last tab goes ahead of the claim's release

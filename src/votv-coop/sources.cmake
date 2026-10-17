@@ -278,6 +278,7 @@ set(VOTVCOOP_SOURCES
     src/coop/player/item_activate.cpp
     src/coop/player/player_damage.cpp
     src/coop/player/ragdoll_gate.cpp
+    src/coop/player/puppet_ragdoll_guard.cpp
     src/coop/player/death_revive.cpp
     src/coop/player/run_end_travel.cpp
     src/coop/player/skin_preview.cpp
