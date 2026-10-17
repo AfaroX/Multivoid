@@ -105,6 +105,13 @@ performs (`coop/props/prop_drop_intent`):
   intent in flight with the actor it was authored from; when that very actor dies before the host's
   spawn arrives, the spawn is refused and the host's copy retired by its eid, never by the key, which
   may name another prop by then.
+- **A place that leaves the hand moving.** A throw from the hand slot is a place too, and the intent
+  carries only a transform, so the host built its copy standing still where the hand let go, coasted
+  it falling there, and the thrower's own copy, mid-flight, was converged and then streamed back to
+  it. The flight is the thrower's: when the placed actor is moving, the intent is followed on the
+  same FIFO, behind its record, by a keyed release that closes no hold, with the actor's pose and
+  velocity, so the host's copy flies the same throw from its first tick; and the host's spawn binds
+  the thrower's own copy without converging it to the intent's stale transform.
 
 Any other keyed prop a client creates is dropped at that door and never reaches the host: that is
 the world's own churn, which every peer produces for itself.
