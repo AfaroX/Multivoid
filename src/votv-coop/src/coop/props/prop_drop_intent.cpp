@@ -17,6 +17,7 @@
 #include "coop/props/prop_key_index.h"  // a key on the wire to a live actor
 #include "coop/props/container_contents_sync.h"  // TakeObjInFlight -- mark a container-extraction birth
 #include "coop/props/container_birth.h"           // a thrown container's birth slice
+#include "coop/items/shovel_scrap.h"              // InFlight: a birth inside a client's shovel bodies
 #include "coop/session/world_load_episode.h"  // InEpisode (quiet during the join loadObjects churn)
 #include "ue_wrap/core/call.h"                   // ParamFrame + Call (setKey on the host re-spawn)
 #include "ue_wrap/engine/engine.h"                 // BeginDeferredSpawn/FinishDeferredSpawn/SetActorScale3D
@@ -85,6 +86,10 @@ struct PendingPlace {
     // unmarked birth here is. Read at the seam because that is the only moment the VM still holds
     // the calling frame.
     bool    playerSpawn = false;
+    // True when the birth happened inside a client's shovel bodies, the pile's turnIntoScrap or the
+    // player's throwShovelItem (coop/items/shovel_scrap): the scrap a dig makes, admitted at drain as an
+    // ordinary drop intent, as a container extraction's item is.
+    bool    shovelScrap = false;
 };
 std::vector<PendingPlace> g_pending;         // GT-only
 constexpr size_t kMaxPending  = 32;          // runaway backstop (a settled client rarely has >1 in flight)
@@ -253,10 +258,14 @@ void OnClientFinishSpawn(void* /*context*/, void* /*srcObj*/, void* result) {
             actor, R::ClassNameOf(actor), ue_wrap::prop::GetInteractableKeyString(actor),
             fromContainerExtract);
     }
+    const bool fromShovel = coop::shovel_scrap::InFlight();
     g_pending.push_back(PendingPlace{actor, R::InternalIndexOf(actor), 0, fromContainerExtract,
-                                     playerAuthored});
+                                     playerAuthored, fromShovel});
     if (fromContainerExtract)
         UE_LOGI("[PROP-DROP] CLIENT enqueued container-EXTRACT birth actor=%p (admitted at drain)", actor);
+    if (fromShovel)
+        UE_LOGI("[PROP-DROP] CLIENT enqueued SHOVEL birth actor=%p cls='%ls' (admitted at drain)", actor,
+                R::ClassNameOf(actor).c_str());
     if (playerAuthored) {
         // The mid-join answer (principle 8), and it is owed HERE rather than at the drain. The
         // divergence sweep dooms every live, unclaimed, in-universe keyed Aprop_C the host's
@@ -505,7 +514,7 @@ void Tick(coop::net::Session* session) {
         // NOT a freshBirth: that kind means a device put an item in a hand and sleeps the host's
         // copy, while a menu prop is dropped in the world at the player's aim and must fall on the
         // host exactly as it falls here -- the transform block below sends its real physics state.
-        if (!parked && !freshBirth && !e.containerExtract && !e.playerSpawn) {
+        if (!parked && !freshBirth && !e.containerExtract && !e.playerSpawn && !e.shovelScrap) {
             probe::NoteDrainExit(e.actor, "not-a-place-nor-whitelisted-birth", e.tries, key);
             continue;
         }
