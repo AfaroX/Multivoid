@@ -7,6 +7,7 @@
 #include "coop/interactables/door_state_verbs.h"
 #include "coop/interactables/door_verb_intent.h"
 #include "coop/interactables/drone_call_intent.h"
+#include "coop/interactables/drone_sack_intent.h"
 #include "coop/interactables/eraser_press_intent.h"
 #include "coop/interactables/keypad_verbs.h"
 #include "coop/interactables/lightgroup_verbs.h"
@@ -20,6 +21,7 @@ namespace coop::verb_lanes {
 
 void Install(coop::net::Session& session) {
     coop::drone_call_intent::Install(&session);  // a client's press of the drone console is run by the host
+    coop::drone_sack_intent::Install(&session);  // a client's drop of the drone's sack is run by the host
     coop::eraser_press_intent::Install(&session);  // a client's press of the drive eraser is run by the host
     coop::door_verb_intent::Install(&session);   // a client's press, hit or pry of a base door is run by the host
     coop::camera_toggle_intent::Install(&session);  // a client's use of a security camera or its laptop light button is run by the host
@@ -33,6 +35,7 @@ void Install(coop::net::Session& session) {
 
 void Tick(coop::net::Session& session) {
     { ue_wrap::ScopedWalkTimer _w{"sync:drone_call"}; coop::drone_call_intent::Tick(session); }  // HOST: run one queued drone-console press a tick a client
+    coop::drone_sack_intent::Tick(session);  // settle the drop-sack watch; HOST: run one queued drop a tick a client
     coop::eraser_press_intent::Tick(session);  // HOST: run one queued eraser press a tick a client, once its drive is seated
     { ue_wrap::ScopedWalkTimer _w{"sync:door_verb"}; coop::door_verb_intent::Tick(session); }    // HOST: run one queued door verb a tick a client
     { ue_wrap::ScopedWalkTimer _w{"sync:camera_toggle"}; coop::camera_toggle_intent::Tick(session); }  // settle its gates; HOST: run one queued camera request a tick a client
@@ -46,6 +49,7 @@ void Tick(coop::net::Session& session) {
 
 void OnDisconnect() {
     coop::drone_call_intent::OnDisconnect();  // its own console button stands
+    coop::drone_sack_intent::OnDisconnect();  // its own drop-sack runs where it is used
     coop::eraser_press_intent::OnDisconnect();  // its own eraser button stands
     coop::door_verb_intent::OnDisconnect();   // a door's own verbs run where they are used
     coop::camera_toggle_intent::OnDisconnect();  // a camera's own press runs where it is made

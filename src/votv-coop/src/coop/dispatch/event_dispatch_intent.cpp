@@ -22,6 +22,7 @@
 #include "coop/interactables/keypad_verbs.h"  // CLIENT->HOST digit, submit, cancel, keycard, reset
 #include "coop/interactables/laptop_tab.h"  // CLIENT->HOST the PC user's tab
 #include "coop/interactables/drone_call_intent.h"  // CLIENT->HOST press of the drone console
+#include "coop/interactables/drone_sack_intent.h"
 #include "coop/interactables/eraser_press_intent.h"  // CLIENT->HOST press of the drive eraser; HOST->CLIENT its show
 #include "coop/creatures/kerfus_intent.h"  // CLIENT->HOST a Kerfus verb (on/off, fix the servers, pat)
 #include "coop/interactables/desk_ping_sync.h"    // a ping's verdict on the main desk, and its answers
@@ -505,6 +506,10 @@ bool HandleIntentEvent(net::Session& session,
         }
         net::DroneFlyIntentPayload p{};
         std::memcpy(&p, msg.payload, sizeof(p));
+        if (p.verb == net::kDroneVerbDropSack) {
+            coop::drone_sack_intent::OnDropSackIntent(session, static_cast<uint8_t>(msg.senderPeerSlot));
+            break;
+        }
         if (p.verb != 0) {
             UE_LOGW("event_feed: DroneFlyIntent verb=%u has no lane -- dropping",
                     static_cast<unsigned>(p.verb));

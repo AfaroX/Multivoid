@@ -300,6 +300,15 @@ machine that owns it and arrives on the stream that already carries it
 body, from a joiner who presses at once, waits for the body rather than being refused, as the
 door-verb, keypad and container lanes wait. The leave-timer face has no lane and stays local.
 
+The drone's own drop-sack action ran on the presser's copy too. On a client that spawned a sack
+there and emptied the mirror's hasSack while the host's drone kept its sack; the client's sack
+crossed as an untracked held item and opened the drone's inventory from anywhere, a second bag
+beside the one the drone still carried. The client refuses its own drop the same way and sends it on
+the drone lane's intent kind as its second verb; the host tests the sender's reach to its own drone
+and that the drone carries a sack, then runs the same verb. The sack crosses as a host birth and the
+hasSack change on the state stream that already carries it (`coop/interactables/drone_sack_intent`).
+Putting a sack back on the drone has no lane yet: the drone takes it natively wherever it lands.
+
 ### The computer and the economy
 
 The base laptop (its tab and inbox), the shared balance, the upgrade levels, the shop orders, the
@@ -372,7 +381,7 @@ removed from its author's hand -- and a joiner gets every box's count at its wor
 | `CoordTowerState` | the host to all; a client to the host | every tower's row (broken, fuses, puzzle, panel, lever), each slot's last op taken and last claim refused; a press of a puzzle button, the lever or the retract, a fuse pulled or inserted |
 | `TurbineState`, `WindowCleanState`, `GrimeState` | each peer or the host | the driver floats; a decrease |
 | `DroneState` | the host to all | the drone's transform and flags |
-| `DroneFlyIntent` | a client to the host | the face pressed, the keyboard; the host finds the console by the sender's reach |
+| `DroneFlyIntent` | a client to the host | the verb: the console keyboard (the host finds the console by the sender's reach) or the drone's drop-sack (the host's drone, reach-tested, carrying a sack) |
 
 ## Late join
 
@@ -401,7 +410,7 @@ state it shows, and the first rows a world takes play no sound.
 | keypads | `coop/interactables/keypad_sync`, `ue_wrap/devices/passwordlock` |
 | power, turbine, windows, grime | `coop/world/power_panel`, `coop/world/power_grid`, `ue_wrap/devices/generator`, `coop/interactables/turbine_sync`, `coop/interactables/window_sync`, `coop/interactables/grime_sync`, `ue_wrap/devices/power_control`, `ue_wrap/devices/windturbine`, `ue_wrap/devices/base_window`, `ue_wrap/devices/grime` |
 | the coordinate towers | `coop/world/coord_tower_rows`, `coop/world/coord_tower_ops`, `ue_wrap/desk/coord_tower` |
-| the drone | `coop/interactables/drone_sync`, `coop/interactables/drone_call_intent`, `ue_wrap/devices/drone`, `ue_wrap/devices/drone_console` |
+| the drone | `coop/interactables/drone_sync`, `coop/interactables/drone_call_intent`, `coop/interactables/drone_sack_intent`, `ue_wrap/devices/drone`, `ue_wrap/devices/drone_console` |
 | the signal servers | `coop/interactables/serverbox_sync`, `coop/interactables/server_upgrade_sync`, `ue_wrap/devices/serverbox` |
 | identity | `coop/element/portable_identity` |
 | tests and probes | `coop/dev/container_selftest`, `coop/dev/door_drill`, `coop/dev/lightswitch_probe`, `coop/dev/drone_probe`, `coop/dev/drone_call_drill`, `coop/dev/light_group_census`, `coop/dev/tower_drill` |
