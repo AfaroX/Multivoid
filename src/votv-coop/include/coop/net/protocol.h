@@ -1048,6 +1048,13 @@ enum class ReliableKind : uint8_t {
     // when it is the holder or after it applied a report. Never relayed; a client's own copy is refused at the host's
     // receive edge. Late join: the host's widget index to the joiner, after its world-ready. LaptopTabPayload.
     LaptopTabState = 186,
+
+    // Client to host: a fire extinguisher ruptured in this client's world -- its shoot, the burst that
+    // flies it, refused there; the host runs the same verb on its copy within the sender's reach and
+    // streams the flight. Never relayed. Late join: none -- a ruptured extinguisher is its own record
+    // (active, life) on the host. Trust: the host reads its own copy and the sender's pose; the client
+    // names the extinguisher and nothing else. FireExtRupturePayload.
+    FireExtRupture = 187,
 };
 
 #pragma pack(push, 1)
@@ -1967,6 +1974,15 @@ struct RemoverResultPayload {
     uint8_t  _pad[3];    // 3 -- zeroed
 };
 static_assert(sizeof(RemoverResultPayload) == 8, "RemoverResultPayload must be 8 bytes");
+
+// A client's ruptured fire extinguisher (FireExtRupture): the extinguisher by key, the eid as the keyless
+// fallback. Nothing else is trusted: the host runs its own copy's rupture.
+struct FireExtRupturePayload {
+    WireKey  key;        // 32 -- the extinguisher's save Key; len=0 -> keyless, resolve by eid
+    uint32_t elementId;  // 4  -- its Element id, 0 = none
+    uint32_t _pad;       // 4  -- zeroed
+};
+static_assert(sizeof(FireExtRupturePayload) == 40, "FireExtRupturePayload must be 40 bytes");
 
 // The server upgrades lane (ServerUpgradeState). Ops 0 (install) and 1 (take-out) name a box by its
 // servers[] index; op 2, the canonical, carries every box's level in servers[] order (a farm past 64

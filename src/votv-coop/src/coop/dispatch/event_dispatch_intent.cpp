@@ -29,6 +29,7 @@
 #include "coop/interactables/desk_verb_intent.h"  // a press on the main desk's save family, and its answers
 #include "coop/items/coingun_sync.h"
 #include "coop/items/point_sack_intent.h"  // CLIENT->HOST an opened point sack
+#include "coop/items/fireext_rupture.h"
 #include "coop/items/order_queue_sync.h"  // HOST->CLIENT the delivery order queue
 #include "coop/items/order_sync.h"
 #include "coop/props/pack_trash_intent.h"  // CLIENT->HOST bagging of a pile or clump
@@ -464,6 +465,20 @@ bool HandleIntentEvent(net::Session& session,
         net::RemoverResultPayload p{};
         std::memcpy(&p, msg.payload, sizeof(p));
         coop::remover_request::OnResult(p);
+        break;
+    }
+    case net::ReliableKind::FireExtRupture: {
+        // CLIENT->HOST: a fire extinguisher ruptured in a client's world; the host ruptures its copy and streams
+        // the flight. Never relayed.
+        if (session.role() != net::Role::Host || msg.senderPeerSlot < 1 || msg.senderPeerSlot >= net::kMaxPeers ||
+            msg.payloadLen < sizeof(net::FireExtRupturePayload)) {
+            UE_LOGW("event_feed: FireExtRupture dropped (role, sender slot %d or length %zu)", msg.senderPeerSlot,
+                    static_cast<size_t>(msg.payloadLen));
+            break;
+        }
+        net::FireExtRupturePayload p{};
+        std::memcpy(&p, msg.payload, sizeof(p));
+        coop::fireext_rupture::OnRupture(session, p, static_cast<uint8_t>(msg.senderPeerSlot));
         break;
     }
     case net::ReliableKind::EraserPressIntent: {

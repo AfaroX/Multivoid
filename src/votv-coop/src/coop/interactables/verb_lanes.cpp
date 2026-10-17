@@ -12,7 +12,9 @@
 #include "coop/interactables/keypad_verbs.h"
 #include "coop/interactables/lightgroup_verbs.h"
 #include "coop/interactables/toggle_verbs.h"
+#include "coop/items/fireext_rupture.h"
 #include "coop/items/point_sack_intent.h"
+#include "coop/items/shovel_scrap.h"
 #include "coop/net/session.h"
 
 #include "ue_wrap/core/walk_timer.h"  // per-lane [WALK-TIME] attribution (diagnostic)
@@ -31,6 +33,8 @@ void Install(coop::net::Session& session) {
     coop::keypad_verbs::Install(&session);       // a keypad's verbs: the host sends each, a client's own entries run on the host
     coop::desk_verb_intent::Install(&session);   // a client's press on the desk's save family is run by the host
     coop::point_sack_intent::Install(&session);  // a client's opened point sack is paid by the host
+    coop::shovel_scrap::Install(&session);       // a client's shovel scrap is admitted as a drop intent
+    coop::fireext_rupture::Install(&session);    // a client's ruptured extinguisher is ruptured by the host
 }
 
 void Tick(coop::net::Session& session) {
@@ -43,6 +47,8 @@ void Tick(coop::net::Session& session) {
     coop::lightgroup_verbs::Tick();     // settle the light group watch
     coop::toggle_verbs::Tick();         // settle the toggle verb watches
     coop::point_sack_intent::Tick();    // settle the point sack watch
+    coop::shovel_scrap::Tick();         // settle the shovel's two watches
+    coop::fireext_rupture::Tick();      // settle the shoot watch; CLIENT: send queued ruptures after their release
     coop::keypad_verbs::Tick(session);  // settle the keypad watches; HOST: run queued keypad intents
     { ue_wrap::ScopedWalkTimer _w{"sync:desk_verb"}; coop::desk_verb_intent::Tick(session); }  // settle its seams; HOST: run one queued desk press a tick a client
 }
@@ -58,6 +64,8 @@ void OnDisconnect() {
     coop::toggle_verbs::OnDisconnect();
     coop::keypad_verbs::OnDisconnect();
     coop::desk_verb_intent::OnDisconnect();
+    coop::shovel_scrap::OnDisconnect();
+    coop::fireext_rupture::OnDisconnect();
     coop::point_sack_intent::OnDisconnect();
 }
 

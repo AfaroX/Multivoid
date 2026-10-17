@@ -250,6 +250,8 @@ set(VOTVCOOP_SOURCES
     src/coop/items/coingun_arbiter.cpp
     src/coop/items/coingun_collect.cpp
     src/coop/items/point_sack_intent.cpp
+    src/coop/items/shovel_scrap.cpp
+    src/coop/items/fireext_rupture.cpp
     src/coop/items/order_sync.cpp
     src/coop/items/order_queue_sync.cpp
     src/coop/world/firefly_sync.cpp

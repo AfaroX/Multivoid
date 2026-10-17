@@ -105,6 +105,12 @@ performs (`coop/props/prop_drop_intent`):
   intent in flight with the actor it was authored from; when that very actor dies before the host's
   spawn arrives, the spawn is refused and the host's copy retired by its eid, never by the key, which
   may name another prop by then.
+- **What a shovel digs.** The shovel's swing calls a chip pile's `turnIntoScrap`, which spawns the
+  pile's scrap and destroys the pile, and the next swing calls the player's `throwShovelItem`, which
+  spawns what the shovel carries and launches it. On a client the pile's destroy crossed and none of
+  its scrap did. A birth inside either body on a client is marked and admitted as a drop intent, as a
+  container extraction's item is (`coop/items/shovel_scrap`); one the shovel takes straight into its
+  load dies before the drain and is never named.
 - **A place that leaves the hand moving.** A throw from the hand slot is a place too, and the intent
   carries only a transform, so the host built its copy standing still where the hand let go, coasted
   it falling there, and the thrower's own copy, mid-flight, was converged and then streamed back to
@@ -258,6 +264,15 @@ deterministic, clamped accrual when the game keeps re-enabling the tick (the tap
 hertz); or an anchor, a start stamp every peer computes from, valid only while the rate is
 constant ([architecture.md](architecture.md), where the authority is going). The reel corrector
 is built; concrete and food are designed and not built.
+
+A fire extinguisher ruptures on a hard knock: its damage reaches `shoot`, a burst rolled at random that
+flies it and is saved as its own record (`active`, `life`). The knock is felt by the copy that was hit,
+so the rupture is the host's: a client's `shoot` is refused at the script-body gate, the client lets go
+of the extinguisher if it holds it, and once that release has gone out it names the extinguisher to the
+host, which tests the sender's reach, ends any hold still parking its copy and runs the same verb. Every
+`shoot` the host runs, its own knock's or a client's, puts the extinguisher on the driven-prop channel,
+which streams the flight until it rests (`coop/items/fireext_rupture`). A client's copy shows the flight
+and not the burst's spray or sound, which run in the ruptured copy's own tick.
 
 ## Who owns what
 
