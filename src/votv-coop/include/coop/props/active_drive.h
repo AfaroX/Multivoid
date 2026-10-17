@@ -125,18 +125,27 @@ inline void BeginLerpToPose(ActiveDrive& d, const ue_wrap::FVector& nloc,
     // catch-up that should snap rather than crawl across the map. (Comparing to renderedLoc would mistake
     // a normal render-delay lag for a teleport.)
     const float dx = nloc.X - d.lastLoc.X, dy = nloc.Y - d.lastLoc.Y, dz = nloc.Z - d.lastLoc.Z;
-    // An ordinary Aprop_C held item ALWAYS snaps (its proven teleport-to-latest behavior). A trash mirror snaps
-    // only to PRIME (first pose) or on a far jump (gap / teleport -- crawling across the map looks worse).
-    if (!d.isTrashMirror || !d.lerpSeeded || (dx * dx + dy * dy + dz * dz) > kSnapDistSq) {
+    // An ordinary Aprop_C held item goes to every pose as it arrives. A trash mirror snaps only to PRIME
+    // (first pose) or on a far jump (gap / teleport -- crawling across the map looks worse).
+    const bool farJump = (dx * dx + dy * dy + dz * dz) > kSnapDistSq;
+    if (!d.isTrashMirror || !d.lerpSeeded || farJump) {
         // Snap + prime BOTH buffer slots at the pose, so the next pose has a valid `prev` to interpolate from.
+        const bool place = !d.lerpSeeded || farJump;
         d.prevLoc = d.lastLoc = d.renderedLoc = nloc;
         d.prevRot = d.lastRot = d.renderedRot = nrot;
         d.prevPoseMs = d.lastPoseMs = nowMs;
         d.haveTwoSnaps = false;     // only one distinct sample -> sit at it until the next pose
         d.lerpSeeded   = true;
         if (void* a = d.LiveActor()) {
-            E::SetActorLocation(a, nloc);
-            E::SetActorRotation(a, nrot);
+            // The held item's steady stream MOVES the parked body rather than snapping it: a snap gives the
+            // kinematic body no velocity, so a stack resting in a carried bucket was left behind and spilled
+            // on every peer but the carrier's, where the game keeps the contents by plain physics while it is
+            // carried (prop_openContainer_C glues them only once they rest). The first pose and a far jump
+            // still place it, since a move across a gap would fling whatever it touched.
+            if (place || !E::MoveActorKinematic(a, nloc, nrot)) {
+                E::SetActorLocation(a, nloc);
+                E::SetActorRotation(a, nrot);
+            }
         }
         return;
     }

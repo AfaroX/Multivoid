@@ -157,6 +157,7 @@ void* g_getFwdFn = nullptr;
 void* g_getRotFn = nullptr;
 void* g_getVelFn = nullptr;
 void* g_setRotFn = nullptr;
+void* g_moveFn = nullptr;   // K2_SetActorLocationAndRotation, the non-teleport move
 void* g_setTickFn = nullptr;
 void* g_getScaleFn = nullptr;
 void* g_setScaleFn = nullptr;
@@ -185,6 +186,7 @@ bool ResolveActorFns() {
         if (!g_getRotFn) g_getRotFn = R::FindFunction(g_actorClass, P::name::GetActorRotationFn);
         if (!g_getVelFn) g_getVelFn = R::FindFunction(g_actorClass, P::name::GetActorVelocityFn);
         if (!g_setRotFn) g_setRotFn = R::FindFunction(g_actorClass, P::name::SetActorRotationFn);
+        if (!g_moveFn) g_moveFn = R::FindFunction(g_actorClass, P::name::SetActorLocationAndRotationFn);
         if (!g_setTickFn) g_setTickFn = R::FindFunction(g_actorClass, P::name::SetActorTickEnabledFn);
         if (!g_getScaleFn) g_getScaleFn = R::FindFunction(g_actorClass, P::name::GetActorScale3DFn);
         if (!g_setScaleFn) g_setScaleFn = R::FindFunction(g_actorClass, P::name::SetActorScale3DFn);
@@ -467,6 +469,24 @@ bool SetActorLocation(void* actor, const FVector& location) {
     f.SetRaw(L"NewLocation", &location, sizeof(location));
     f.Set<bool>(L"bSweep", false);
     f.Set<bool>(L"bTeleport", true);  // snap to the absolute pose (no sweep)
+    if (!Call(actor, f)) return false;
+    return f.Get<bool>(L"ReturnValue");
+}
+
+bool MoveActorKinematic(void* actor, const FVector& location, const FRotator& rotation) {
+    if (!actor || !ResolveActorFns() || !g_moveFn) {
+        static bool s_said = false;
+        if (!s_said) { s_said = true; UE_LOGE("engine: MoveActorKinematic unresolved (fn=%p)", g_moveFn); }
+        return false;
+    }
+    // bTeleport false: the root body is moved to a kinematic target, not snapped, so the physics step
+    // gives it this frame's velocity and what rests on or in it is carried, as a held body carries it
+    // on the machine whose hand moves it. One call, so location and rotation form one target.
+    ParamFrame f(g_moveFn);
+    f.SetRaw(L"NewLocation", &location, sizeof(location));
+    f.SetRaw(L"NewRotation", &rotation, sizeof(rotation));
+    f.Set<bool>(L"bSweep", false);
+    f.Set<bool>(L"bTeleport", false);
     if (!Call(actor, f)) return false;
     return f.Get<bool>(L"ReturnValue");
 }
