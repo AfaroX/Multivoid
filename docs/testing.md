@@ -63,6 +63,17 @@ is a line in it. One log assertion checks the pile carry-and-throw loop against 
 invariants across both peers' logs and prints a verdict table; a capture step
 grabs a game window from outside the process for the screenshot scenarios.
 
+### Finding what diverged
+
+A desync usually reaches us as a player's report. With `[dev] desync_audit=1` in both players'
+`multivoid.ini`, each peer appends a snapshot of every keyed prop it holds to `multivoid-desync.txt`
+beside the game once a minute of the shared clock -- position, rotation, physics state, what moves
+it, and a digest of its own save record -- and counts the client births that never reached the host
+by class and by the Blueprint function that made them (`coop/dev/desync_audit`).
+`python tools/desync_compare.py <host file> <client file>` pairs the snapshots by their clock minute
+and names, per class, the props that exist on one side only, rest apart, or carry a different
+record, and the unsynced births by caller: a ranked list of what to sync next, from real play.
+
 ### The gates a push runs
 
 Every push and pull request runs the source gates, which need no compiler and take about ten

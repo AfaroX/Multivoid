@@ -3,6 +3,7 @@
 #include "coop/props/prop_drop_intent.h"
 
 #include "coop/dev/prop_birth_key_probe.h"   // the seam's key-timing and drain-exit instrumentation
+#include "coop/dev/desync_audit.h"          // the births that stay on this client, named by caller
 #include "coop/element/registry.h"          // EidForActor (drain: tracked/mirror exclusion)
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
@@ -90,6 +91,8 @@ struct PendingPlace {
     // player's throwShovelItem (coop/items/shovel_scrap): the scrap a dig makes, admitted at drain as an
     // ordinary drop intent, as a container extraction's item is.
     bool    shovelScrap = false;
+    // [dev] The Blueprint function that spawned it, kept only while the desync snapshots run.
+    std::wstring caller;
 };
 std::vector<PendingPlace> g_pending;         // GT-only
 constexpr size_t kMaxPending  = 32;          // runaway backstop (a settled client rarely has >1 in flight)
@@ -260,7 +263,8 @@ void OnClientFinishSpawn(void* /*context*/, void* /*srcObj*/, void* result) {
     }
     const bool fromShovel = coop::shovel_scrap::InFlight();
     g_pending.push_back(PendingPlace{actor, R::InternalIndexOf(actor), 0, fromContainerExtract,
-                                     playerAuthored, fromShovel});
+                                     playerAuthored, fromShovel,
+                                     coop::dev::desync_audit::CallerName()});
     if (fromContainerExtract)
         UE_LOGI("[PROP-DROP] CLIENT enqueued container-EXTRACT birth actor=%p (admitted at drain)", actor);
     if (fromShovel)
@@ -516,6 +520,7 @@ void Tick(coop::net::Session* session) {
         // host exactly as it falls here -- the transform block below sends its real physics state.
         if (!parked && !freshBirth && !e.containerExtract && !e.playerSpawn && !e.shovelScrap) {
             probe::NoteDrainExit(e.actor, "not-a-place-nor-whitelisted-birth", e.tries, key);
+            coop::dev::desync_audit::NoteLocalOnlyBirth(R::ClassNameOf(e.actor), e.caller);
             continue;
         }
         // No position to place it by: a failed read is a dispatch that faulted, which a later tick

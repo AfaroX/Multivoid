@@ -15,6 +15,7 @@ set(VOTVCOOP_DEV_SOURCES
     src/coop/dev/add_points.cpp
     src/coop/dev/spawn_order_probe.cpp
     src/coop/dev/prop_birth_key_probe.cpp
+    src/coop/dev/desync_audit.cpp
     src/coop/dev/spawn_match_probe.cpp
     src/coop/dev/native_text_probe.cpp
     src/coop/dev/eid_lifetime_trace.cpp

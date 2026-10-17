@@ -82,6 +82,7 @@
 #include "coop/dev/physmods_drill.h"  // [dev] a module plug and unplug are sent at their verbs, and a rejoin's load sends none
 #include "coop/dev/pinecone_probe.h"
 #include "coop/dev/prop_birth_key_probe.h"  // the place/birth seam's key timing and drain exits
+#include "coop/dev/desync_audit.h"  // every peer writes its world, so a script names what diverged
 #include "coop/dev/pry_drill.h"  // [dev] a stuck pryable pried off its wall, watched on both peers
 #include "coop/dev/recycled_slot_drill.h"  // [dev] a recycled object slot, staged on the local pawn
 #include "coop/dev/rng_roll_census.h"  // the dev roll census
@@ -127,6 +128,7 @@ void EndSession() {
     coop::director::EndWalks();
     // The two prop-seam probes print their run totals before the state they describe is cleared.
     coop::dev::prop_birth_key_probe::EmitVerdict();
+    coop::dev::desync_audit::OnDisconnect();  // [dev] the session's local-only birth tally, written
     coop::dev::spawn_match_probe::EmitVerdict();
     coop::dev::food_clock_probe::OnDisconnect();  // [dev] tallies and the cached class, which a level change can unload
     coop::dev::lookat_churn_probe::OnDisconnect();  // [dev] the aim episodes, after the run's last reading
@@ -213,6 +215,7 @@ void TickDrills(coop::net::Session& session) {
     coop::dev::kerfus_throw_drill::Tick();  // [dev] the Kerfus throw drill's phases (a single bool read when off)
     coop::dev::kerfur_serve_drill::Tick();  // [dev] the Omega serve drill's phases (a single bool read when off)
     coop::dev::prop_birth_key_probe::Tick();  // [dev] periodic seam totals (a single bool read when off)
+    coop::dev::desync_audit::Tick(session);  // [dev] a world snapshot each shared-clock minute (a single bool read when off)
     coop::dev::food_clock_probe::Tick();  // [dev] the food catch-up's clock reading (a single bool read when off)
     coop::dev::lookat_churn_probe::Tick();  // [dev] the interaction UI's rebuild rate under a held aim (a single bool read when off)
     coop::dev::lookat_aim_drill::Tick(&session);  // [dev] walk to a prop and hold the aim (a single bool read when off)

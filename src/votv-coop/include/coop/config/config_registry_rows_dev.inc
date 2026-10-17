@@ -757,3 +757,5 @@ CFG_FLAG(selftest_break_permissions, "selftest_break_permissions", "dev", false,
 CFG_FLAG(selftest_break_action_log, "selftest_break_action_log", "dev", false, "VOTVCOOP_SELFTEST_BREAK_ACTION_LOG",
     "Red arm of the commands selftest's action-log cases: the first acting case of each cases file expects "
     "no record, so it must fail.")
+CFG_FLAG(desync_audit, "desync_audit", "dev", false, "VOTVCOOP_DESYNC_AUDIT",
+    "Diagnostic (both roles): once a minute of the shared clock, append every keyed prop this peer holds -- position, rotation, physics state, what moves it, and a digest of its own save record -- to multivoid-desync.txt beside the game, with the client births that never reached the host counted by class and calling function. tools/desync_compare.py over the host's file and a client's names what diverged.")
