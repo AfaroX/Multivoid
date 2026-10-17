@@ -210,7 +210,7 @@ the host's own births: a prop it spawns simulating -- a spawn-menu barrel in mid
 drop, a prop built from a client's intent -- coasts from its birth until it rests, since every
 peer would otherwise simulate its own fall and the copies came to rest apart; at most 32 props
 are coasting at once, and a burst past that falls locally (`coop/props/host_spawn_watcher`). A
-prop that a pushed prop knocks has no verb of its own and is not streamed. A receiver parks the prop on the first pose
+prop that a pushed prop knocks streams from its contact report (below, Knocked props). A receiver parks the prop on the first pose
 and follows the stream the way a carried trash clump is followed -- the fixed-delay interpolation,
 frozen at the last pose across a gap -- where a held prop snaps to each pose; a reliable end edge
 carries the final pose, the host's physics flags and the velocity once the prop has rested or a hand
@@ -223,6 +223,15 @@ A mirror's physics and collision are set to what the game's own initialisation w
 produced on this peer (`coop/props/prop_wire_parity`); a fresh mirror starts kinematic while it
 is remote-owned. A spawn or destroy the receiver applied is marked so the symmetric observer
 does not broadcast it back (`coop/props/prop_echo_suppress`).
+
+### Knocked props
+
+A prop another prop strikes moving has no verb of its own, so it once moved on each peer by that peer's
+own physics and rested apart. Every prop carries `comp_physicsImpact`, whose contact report runs through
+the component's `hitCpp`; on the host, after it runs, a prop now simulating faster than 5 cm/s is put
+on the driven-prop channel, which streams it until it rests and ends with the host's pose
+(`coop/props/knock_stream`). A carried prop's copy moves rather than teleports on every peer, so what a
+client's carried prop pushes over on the host streams the same way.
 
 ### Sticking to a wall
 
@@ -349,7 +358,6 @@ prop resolves.
 | A wall-attachable whose stick replay finds no surface here is frozen in place without the attach, so when the thing it stuck to is destroyed it stays in the air here while every other copy falls | `[V]` `coop/props/prop_stick_sync`'s fallback writes the flag without the component's attach or its destroy binding; `[RD]` the stick carries no parent |
 | A prop the driven-prop channel set coasting can come to rest a few centimetres from the host's copy: the host ends a coasting stream half a second after the prop stops moving, before its body sleeps, and the end edge sets the client's copy to the host's pose and hands it back its physics, so each copy settles on its own. The broom drill measured 0 to 6.4 cm, and 12.1 cm for a prop whose support another prop knocked away on the host | `[V]` `coop/props/prop_drive_host` (`kRestMs`), `coop/props/prop_drive_stream` (the end edge restores simulation per `coop/props/prop_wire_parity`); the broom drill's push and dispense phases |
 | A prop another player holds is a moving body on every peer, so it pushes what it touches there too: on the host those pushes are the authoritative world, and the props a client's copy pushed stay where it pushed them on that client, since a knock has no lane | `[V]` `coop/props/active_drive` moves the parked copy with `ue_wrap::engine::MoveActorKinematic`; the knock row below |
-| A prop that a pushed prop knocks moves on the host only: the driven-prop channel is fed by verbs, and a knock is none. One drill run measured a knocked prop moving 25.1 cm on the host and resting 15.9 cm from the client's copy | `[V]` the broom drill's push phases (`harness/autotest/autotest_broomstroke.cpp`); `coop/items/broom_push` streams only what a stroke itself pushed |
 | A prop parked under the host's drive cannot be grabbed on a client while the drag lasts: the park turns the body kinematic and the game's grab needs a simulating one. It is grabbable again after the end edge | `[V]` `coop/props/prop_drive_stream` parks by switching the mesh's simulation off (`ue_wrap/engine/engine_physics`); `coop/props/prop_wire_parity` records why a kinematic mirror is ungrabbable |
 | A pose can arrive milliseconds before the spawn that names its prop; that is a race, not a defect, and a ledger tells the two apart instead of warning per packet | `[V]` `coop/props/unresolved_pose_ledger` |
 

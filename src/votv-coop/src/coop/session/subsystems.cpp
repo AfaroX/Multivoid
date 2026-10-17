@@ -139,6 +139,7 @@
 #include "coop/props/pile_spawn_bind.h"       // OnDisconnect: a client's own parked clumps go back to the game
 #include "coop/props/prop_element_tracker.h"  // reseed hub consumer install + drain
 #include "coop/props/prop_save_data.h"
+#include "coop/props/knock_stream.h"
 #include "coop/props/record_sync.h"
 #include "coop/props/prop_snapshot.h"
 #include "coop/props/remote_prop.h"
@@ -244,6 +245,7 @@ void Install(coop::net::Session& session) {
     coop::props::container_contents_sync::Install(&session);  // container contents
     coop::props::prop_record_refresh::Install(&session);  // drive box + reel case republish their own record
     coop::props::record_sync::Install(&session);  // any covered prop's record republished when it changes in place
+    coop::props::knock_stream::Install(&session);  // HOST: a knocked prop streams on the driven-prop channel until it rests
     coop::props::prop_food_state::Install();  // the food family claims its own live state off the record lane
     coop::desk_cursor_sync::Install(&session);  // coords-panel live-cursor unreliable motion stream (interpolated mirror)
     coop::desk_input_sync::Install(&session);  // the claim-free field-granular desk input lane
@@ -554,6 +556,7 @@ DisconnectStats DisconnectAll() {
     coop::signal_catch_sync::OnDisconnect();
     coop::prop_save_data::OnDisconnect();
     coop::props::record_sync::OnDisconnect();
+    coop::props::knock_stream::OnDisconnect();
     coop::laptop_sync::OnDisconnect();
     coop::portable_pc_lid::OnDisconnect();
     coop::laptop_buffer_sync::OnDisconnect();  // quad shadow + assembler
@@ -668,7 +671,7 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:device_occupancy"}; coop::device_occupancy::Tick(); }  // device occupancy: activeInterface edge poll + pending claim retry
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:console_state"}; coop::console_state_sync::Tick(); }  // signal-catcher: host sky poll / client mirror sweep / desk + dish owner streams
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:signal_catch"}; coop::signal_catch_sync::Tick(); }  // the catch and cleared detectors, 1 Hz
-    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:propsave"}; coop::prop_save_data::Drive(); coop::props::record_sync::Tick(); }  // budgeted park applies; records sent on change + the 1 Hz assembler sweep
+    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:propsave"}; coop::prop_save_data::Drive(); coop::props::record_sync::Tick(); coop::props::knock_stream::Tick(); }  // budgeted park applies; records sent on change + the 1 Hz assembler sweep
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:laptop"}; coop::laptop_sync::Tick(); }  // PC power edge poll (4 Hz)
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:pc_lid"}; coop::portable_pc_lid::Tick(); }  // the lid's watch until live, then waiting lines and held edges (1 Hz while any)
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:laptop_quad"}; coop::laptop_buffer_sync::Tick(); }  // quad int pre-filter poll (4 Hz)

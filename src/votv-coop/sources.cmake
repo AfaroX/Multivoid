@@ -315,6 +315,7 @@ set(VOTVCOOP_SOURCES
     src/coop/props/prop_snapshot.cpp
     src/coop/props/prop_save_data.cpp
     src/coop/props/record_sync.cpp
+    src/coop/props/knock_stream.cpp
     src/coop/props/prop_stick_sync.cpp
     src/coop/props/prop_synth_key.cpp
     src/coop/props/prop_fresh_spawn.cpp
