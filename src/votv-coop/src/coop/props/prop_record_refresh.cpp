@@ -5,6 +5,7 @@
 #include "coop/net/session.h"
 #include "coop/props/join_membership_sweep.h"
 #include "coop/props/prop_save_data.h"
+#include "coop/props/record_sync.h"
 
 #include "ue_wrap/actors/prop.h"
 #include "ue_wrap/core/call.h"
@@ -201,6 +202,7 @@ void OnUpdPost(const sg::Call& call) {
     // is also the acknowledgement. Either way the far side's loadData applies it and calls upd(),
     // so the lid, the contents and the repaint all land together.
     if (coop::prop_save_data::Publish(s, actor, key)) {
+        coop::props::record_sync::NoteApplied(actor);  // sent at its own verb: the sweep's base, so not sent twice
         ++g_cPublished;
         UE_LOGI("prop_record_refresh: published %ls key='%ls' %s (%s)", w->row->Class(), key.c_str(),
                 w->describe(actor).c_str(),

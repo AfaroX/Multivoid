@@ -11,6 +11,7 @@
 #include "ue_wrap/desk/signal_dynamic.h"
 
 #include <chrono>
+#include <cmath>
 #include <cstring>
 #include <unordered_map>
 
@@ -400,6 +401,25 @@ void SpliceGroups(std::vector<V>& dst, const std::vector<V>& src) {
 bool OverridesGetData(void* cls) {
     const ClassVerbs* v = VerbsFor(cls);
     return v && v->overrides;
+}
+
+uint64_t StateDigest(const SaveRecord& r) {
+    uint64_t h = 1469598103934665603ull;  // FNV-1a
+    auto byte = [&h](uint8_t b) { h ^= b; h *= 1099511628211ull; };
+    auto u32 = [&byte](uint32_t v) { for (int i = 0; i < 4; ++i) byte(static_cast<uint8_t>(v >> (8 * i))); };
+    auto flt = [&u32](float f) { u32(static_cast<uint32_t>(static_cast<int32_t>(std::lround(f * 100.0f)))); };
+    auto str = [&u32](const std::wstring& w) { for (wchar_t ch : w) u32(static_cast<uint32_t>(ch)); u32(0xFFFFFFFFu); };
+    for (const auto& g : r.bools)    { u32(0xB0); for (uint8_t b : g) byte(b); }
+    for (const auto& g : r.floats)   { u32(0xF0); for (float x : g) flt(x); }
+    for (const auto& g : r.ints)     { u32(0x10); for (int32_t x : g) u32(static_cast<uint32_t>(x)); }
+    for (const auto& g : r.strings)  { u32(0x50); for (const auto& x : g) str(x); }
+    for (const auto& g : r.classes)  { u32(0xC0); for (const auto& x : g) str(x); }
+    for (const auto& g : r.names)    { u32(0x40); for (const auto& x : g) str(x); }
+    for (const auto& g : r.bytes)    { u32(0xB1); for (uint8_t b : g) byte(b); }
+    for (const auto& g : r.vectors)  { u32(0x0E); for (const auto& v : g) { flt(v[0]); flt(v[1]); flt(v[2]); } }
+    for (const auto& g : r.rotators) { u32(0x07); for (const auto& v : g) { flt(v[0]); flt(v[1]); flt(v[2]); } }
+    u32(static_cast<uint32_t>(r.signals.size()));
+    return h;
 }
 
 bool CaptureRecord(void* actor, SaveRecord& out) {

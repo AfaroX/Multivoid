@@ -57,32 +57,6 @@ std::string Narrow(const std::wstring& w) {
     return s;
 }
 
-// FNV-1a over a record's own state: every value group, floats rounded to a hundredth so the bit
-// noise of two machines' arithmetic does not read as a divergence. The transform and the key are
-// the snapshot's own columns, so they stay out.
-struct Fnv {
-    uint64_t h = 1469598103934665603ull;
-    void Byte(uint8_t b) { h ^= b; h *= 1099511628211ull; }
-    void U32(uint32_t v) { for (int i = 0; i < 4; ++i) Byte(static_cast<uint8_t>(v >> (8 * i))); }
-    void F(float f) { U32(static_cast<uint32_t>(static_cast<int32_t>(std::lround(f * 100.0f)))); }
-    void Str(const std::wstring& s) { for (wchar_t c : s) U32(static_cast<uint32_t>(c)); U32(0xFFFFFFFFu); }
-};
-
-uint64_t RecordDigest(const SR::SaveRecord& r) {
-    Fnv f;
-    for (const auto& g : r.bools)   { f.U32(0xB0); for (uint8_t b : g) f.Byte(b); }
-    for (const auto& g : r.floats)  { f.U32(0xF0); for (float x : g) f.F(x); }
-    for (const auto& g : r.ints)    { f.U32(0x10); for (int32_t x : g) f.U32(static_cast<uint32_t>(x)); }
-    for (const auto& g : r.strings) { f.U32(0x50); for (const auto& s : g) f.Str(s); }
-    for (const auto& g : r.classes) { f.U32(0xC0); for (const auto& s : g) f.Str(s); }
-    for (const auto& g : r.names)   { f.U32(0x40); for (const auto& s : g) f.Str(s); }
-    for (const auto& g : r.bytes)   { f.U32(0xB1); for (uint8_t b : g) f.Byte(b); }
-    for (const auto& g : r.vectors)  { f.U32(0x0E); for (const auto& v : g) { f.F(v[0]); f.F(v[1]); f.F(v[2]); } }
-    for (const auto& g : r.rotators) { f.U32(0x07); for (const auto& v : g) { f.F(v[0]); f.F(v[1]); f.F(v[2]); } }
-    f.U32(static_cast<uint32_t>(r.signals.size()));
-    return f.h;
-}
-
 // What moves the prop right now on this peer, which the comparator uses to skip a pose that is
 // legitimately in flight: H this player's hand, S another player's held stream or a driven stream.
 char Mover(void* actor) {
@@ -123,7 +97,7 @@ void Snapshot(coop::net::Session& s, long bucket, float clock) {
         void* cls = R::ClassOf(a);
         if (cls && SR::OverridesGetData(cls)) {
             SR::SaveRecord rec;
-            if (SR::CaptureRecord(a, rec)) { digest = RecordDigest(rec); ++records; }
+            if (SR::CaptureRecord(a, rec)) { digest = SR::StateDigest(rec); ++records; }
         }
         std::fprintf(f, "%s\t%s\t%.1f\t%.1f\t%.1f\t%.1f\t%.1f\t%.1f\t%c\t%c\t%u\t%016llx\n",
                      Narrow(e.key).c_str(), Narrow(R::ClassNameOf(a)).c_str(), loc.X, loc.Y, loc.Z,

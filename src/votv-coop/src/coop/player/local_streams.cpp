@@ -15,6 +15,7 @@
 #include "coop/props/trash_channel.h"   // CtxForEid, the trash sync-time context
 #include "coop/props/prop_element_tracker.h"
 #include "coop/props/prop_drive_host.h"  // Coast: a host release streams to rest
+#include "coop/props/record_sync.h"  // NoteTouched: the hold edges make a prop this peer's to author
 #include "coop/props/prop_wire_parity.h"  // PhysFlagsOf, the flags a release carries
 #include "coop/props/remote_prop.h"     // ResolveMirrorEidByActor (the bound-clump held-pose eid fallback)
 #include "coop/props/trash_collect_sync.h"
@@ -342,6 +343,7 @@ void Tick(coop::net::Session& session, void* local, void* controller) {
             if (!churnRegrab && ++g_holdGen == 0) g_holdGen = 1;
             const unsigned eidLog =
                 (g_lastHeldEid == coop::element::kInvalidId) ? 0u : static_cast<unsigned>(g_lastHeldEid);
+            coop::props::record_sync::NoteTouched(heldActor);  // this player authors its state while it holds it
             UE_LOGI("net: NEW held actor %p cls='%ls' key='%ls' eid=%u -> %s",
                     heldActor, R::ClassNameOf(heldActor).c_str(),
                     ue_wrap::prop::GetInteractableKeyString(heldActor).c_str(),
@@ -573,6 +575,7 @@ void Tick(coop::net::Session& session, void* local, void* controller) {
                 coastActor = g_lastHeldProp.Raw();
             }
         }
+        coop::props::record_sync::NoteTouched(g_lastHeldProp.Raw());  // and for a while after it lets go
         g_lastHeldProp.Reset();
         g_lastHeldKey = {};
         g_lastHeldEid = coop::element::kInvalidId;  // the cached held eid goes with the release

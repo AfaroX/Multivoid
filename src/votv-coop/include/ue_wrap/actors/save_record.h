@@ -143,6 +143,11 @@ bool OverridesGetData(void* cls);
 // VOTV mod, publishes as a rule's spawn payload on its README Blueprint page (docs/credits.md).
 bool CaptureRecord(void* actor, SaveRecord& out);
 
+// A digest of the record's own state: every value group, floats rounded to a hundredth so two machines'
+// arithmetic noise does not read as a change. The transform and the key are identity and pose, which
+// their own lanes carry, so they stay out. Equal digests mean equal save state. Pure, any thread.
+uint64_t StateDigest(const SaveRecord& r);
+
 // Hand a record back to `actor` through its own `loadData` -- the LEAF half of it only.
 //
 // Aprop_C::loadData restores the save Key, the two names, the four saved bools, the scale and the

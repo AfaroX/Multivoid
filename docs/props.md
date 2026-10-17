@@ -140,6 +140,19 @@ chooses the subject, because the game applies the rest itself; it costs somethin
 picks the subject on its own, which today is the client's pile cone described in
 [piles.md](piles.md).
 
+### A prop's own state, when it changes
+
+A prop's own save record -- what its class's `getData` writes beyond the base prop's -- rides every
+birth path (`coop/props/prop_save_data`). A prop whose state changes where it sits now crosses too
+(`coop/props/record_sync`): the host keeps a digest of every covered prop's record, sixteen
+`getData` calls a frame over a two-second sweep, and publishes a record whose digest moved, at most
+once a second per prop and four a frame; a client digests only what it authors, the prop in its hand
+and the ones it let go of in the last eight seconds, and sends a change as the intent the host
+re-publishes. A record that lands re-bases the receiver's digest, so it is never sent back, and the
+two classes with a republish of their own at their `upd` re-base it the same way. A prop whose digest
+moves three sweeps running with no one touching it is a local accumulator -- food warming, concrete
+curing -- named once per class and left to its anchor design rather than streamed.
+
 ### Holding, throwing, dropping
 
 While a prop is held, its holder owns it. The holder streams the held prop's world transform every
