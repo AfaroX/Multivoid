@@ -576,7 +576,9 @@ void Tick(coop::net::Session& session, void* local, void* controller) {
             // or the toolgun left frozen has nothing to converge. A client's release is not
             // streamed: its own copy flies on its machine, and a stream would replace the flight
             // its thrower is watching.
-            if (session.role() == coop::net::Role::Host && g_lastHeldProp.Alive() &&
+            // A part with no wire identity of its own -- a fridge door, a swinging flap, both parent-owned --
+            // has no stream to ride, and its parent's lane carries what it changes.
+            if (session.role() == coop::net::Role::Host && g_lastHeldProp.Alive() && relEid != 0 &&
                 (rel.physFlags & coop::net::propspawn_flags::kSimulatePhysics) != 0) {
                 coastActor = g_lastHeldProp.Raw();
             }
