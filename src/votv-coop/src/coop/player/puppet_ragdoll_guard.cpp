@@ -51,6 +51,4 @@ void Tick() {
     }
 }
 
-uint32_t RefusedRagdolls() { return g_refused.load(std::memory_order_relaxed); }
-
 }  // namespace coop::puppet_ragdoll_guard
