@@ -1,5 +1,12 @@
 # Design: items inside a carried bucket stay in it
 
+**Superseded.** Decoding `prop_openContainer_C`'s bytecode showed design A's premise wrong: `isHolding` is
+set by `playerHoldPre`, which the player calls only from `updateHold` -- the hand-slot display, not a
+physics carry. A carried bucket keeps its stack by plain physics; the container glues contents only
+once they rest and releases them when woken or tipped. The fix built instead is design C, narrowed:
+a held prop's copy moves rather than teleports (commit `8b0456a0` on `fix/puppet-slip-and-join-vitals`).
+The root-cause plan is in `SYNC-ROOT-CAUSES.md`.
+
 Status: analysis only. Nothing here is built. Written against branch `fix/puppet-slip-and-join-vitals`
 (base: upstream `main` a9ae81c3, build b225).
 
