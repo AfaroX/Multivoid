@@ -88,6 +88,11 @@ void PlayArrivalCue(void* drone);
 // CLIENT mirror: show/hide the arrival signal light (light_alarm). On while parked-with-cargo. GT.
 void SetSignalLight(void* drone, bool on);
 
+// CLIENT mirror: show or hide the sack the drone carries (its `sack` component), as the host's
+// dropSack and putSackOn do on the drone that runs them. No-op when the component does not
+// resolve. Game thread.
+void SetSackVisible(void* drone, bool visible);
+
 // CLIENT mirror: write the interaction-gate fields (canTakeOff, hasSack) onto the
 // mirror drone so a PARKED drone is interactable (else the gate prints "drone is in motion" + offers
 // no options -- the suppressed tick never sets them). Game thread.
