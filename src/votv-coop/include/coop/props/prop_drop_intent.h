@@ -42,11 +42,13 @@ void Tick(coop::net::Session* session);
 // later re-spawn authors exactly ONE host prop and there is no dup. Game thread. Bounded FIFO set.
 void NoteClientKeyedDestroy(const std::wstring& key, void* actor);
 
-// CLIENT, on the host's spawn of `key` (host eid `hostEid`): true when it answers an intent this client
-// authored whose own actor has since been destroyed -- taken by a device the tick after the place, or
-// picked up again. The spawn is then refused, and the host's copy retired by eid. Every answer ends the
-// intent's tracking. Game thread.
-bool RefuseConsumedEcho(const std::wstring& key, uint32_t hostEid);
+// CLIENT, on the host's spawn of `key` (host eid `hostEid`): whether it answers an intent this client
+// authored. Refused: the intent's own actor has since been destroyed -- taken by a device the tick after
+// the place, or picked up again -- so the spawn is refused and the host's copy retired by eid. OwnCopy:
+// that actor is alive and is the authority of its own flight; `*ownCopy` names it, and the spawn binds
+// to it without converging it to the intent's stale transform. Every answer ends the tracking. Game thread.
+enum class EchoAnswer : uint8_t { NotOurs, Refused, OwnCopy };
+EchoAnswer AnswerEcho(const std::wstring& key, uint32_t hostEid, void** ownCopy);
 
 // HOST handler for a received PropDropIntent: spawn the authoritative Aprop_C by Key at the
 // transform, NOT echo-suppressed, so the host's own FinishSpawn watcher expresses it and broadcasts

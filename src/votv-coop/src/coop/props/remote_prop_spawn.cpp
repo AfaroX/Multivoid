@@ -20,7 +20,7 @@
 #include "coop/player/players_registry.h"  // kMaxPeers (the hand-axis buffer)
 #include "coop/props/pile_look.h"
 #include "coop/props/pile_spawn_bind.h"  // the pile's spawn-time twin destroy and adopt
-#include "coop/props/prop_drop_intent.h"  // RefuseConsumedEcho: the answer to a place lost before it
+#include "coop/props/prop_drop_intent.h"  // AnswerEcho: the host's answer to a place this client authored
 #include "coop/props/join_membership_sweep.h"  // the claim set and the divergence sweep
 #include "coop/dev/spawn_order_probe.h"  // the keyless load-spawn coverage probe
 #include "coop/dev/join_window_pos_trace.h"  // the keyed-prop join-window position trace
@@ -242,8 +242,10 @@ void OnSpawn(const coop::net::PropSpawnPayload& payload, int senderSlot,
     // The host's answer to a place this client authored and then lost -- a device took the placed
     // actor the tick after the intent went out, or the player picked it up again. Its own copy is gone,
     // so this spawn would stand as a second one; it is refused, and the host's copy retired by eid.
+    void* ownCopy = nullptr;
     if (senderSlot == 0 && !coop::prop_element_tracker::SessionIsHost() &&
-        coop::prop_drop_intent::RefuseConsumedEcho(keyW, payload.elementId)) {
+        coop::prop_drop_intent::AnswerEcho(keyW, payload.elementId, &ownCopy) ==
+            coop::prop_drop_intent::EchoAnswer::Refused) {
         return;
     }
     // The dedupe: a local Aprop_C with the same Key already exists (both peers loaded the same
@@ -304,6 +306,15 @@ void OnSpawn(const coop::net::PropSpawnPayload& payload, int senderSlot,
             UE_LOGI("remote_prop::OnSpawn: key '%ls' is under a held or driven stream -- skipping convergence (the stream owns position)",
                     keyW.c_str());
             // The mirror is still registered, so the sender's PropDestroy resolves by eid.
+            coop::remote_prop::RegisterPropMirror(payload.elementId, existing, keyW, classW, senderSlot);
+            return;
+        }
+        // This client's own place, still in flight: its copy authors the throw, and the intent's transform is
+        // where the hand let go, not where the prop is now. Converging it there pulled a thrown prop back to
+        // the thrower; the host's copy already took the flight on the release behind the intent.
+        if (ownCopy && existing == ownCopy) {
+            UE_LOGI("remote_prop::OnSpawn: key '%ls' is this client's own place in flight -- bound without converge",
+                    keyW.c_str());
             coop::remote_prop::RegisterPropMirror(payload.elementId, existing, keyW, classW, senderSlot);
             return;
         }

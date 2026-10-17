@@ -42,6 +42,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <deque>
 #include <iterator>
@@ -137,6 +138,32 @@ void NoteAuthored(const std::wstring& key, void* actor) {
         it = (now - it->second.authoredMs >= kInFlightMs) ? g_inFlight.erase(it) : std::next(it);
     if (g_inFlight.size() >= kMaxInFlight && g_inFlight.find(key) == g_inFlight.end()) return;
     g_inFlight[key] = InFlight{actor, now, false};   // a re-author of the key starts it over
+}
+
+// A place that leaves the hand moving -- a throw from the hand slot -- carries only a transform on its
+// intent, so the host built its copy standing still at the hand and streamed it falling there, and this
+// client's own copy, mid-flight, was pulled back to it. The flight is the thrower's: the intent is
+// followed on the same FIFO by the release the held-prop lane already speaks, keyed and closing no hold,
+// with the actor's pose and velocity, so the host's copy flies the same throw from its first tick.
+constexpr float kFlightMinSpeedCmS = 1.0f;   // a resting place has nothing to hand over
+
+void SendFlight(coop::net::Session* s, void* actor, const coop::net::WireKey& key,
+                const ue_wrap::FVector& loc, const ue_wrap::FRotator& rot) {
+    const ue_wrap::prop::VelocityState v = ue_wrap::prop::GetPhysicsVelocity(actor);
+    if (!v.ok) return;
+    const float sp = std::sqrt(v.linearCmS.X * v.linearCmS.X + v.linearCmS.Y * v.linearCmS.Y +
+                               v.linearCmS.Z * v.linearCmS.Z);
+    if (sp < kFlightMinSpeedCmS) return;
+    coop::net::PropReleasePayload rel{};
+    rel.key = key;
+    rel.linVelX = v.linearCmS.X;   rel.linVelY = v.linearCmS.Y;   rel.linVelZ = v.linearCmS.Z;
+    rel.angVelX = v.angularDegS.X; rel.angVelY = v.angularDegS.Y; rel.angVelZ = v.angularDegS.Z;
+    rel.physFlags = coop::prop_wire_parity::PhysFlagsOf(actor);
+    rel.locX = loc.X; rel.locY = loc.Y; rel.locZ = loc.Z;
+    rel.rotPitch = rot.Pitch; rel.rotYaw = rot.Yaw; rel.rotRoll = rot.Roll;
+    rel.hasPose = 1;
+    s->SendPropRelease(rel);   // elementId 0 and holdGen 0: a keyed release that closes no hold
+    UE_LOGI("[PROP-DROP] CLIENT handed the host its flight: |v|=%.1f cm/s", sp);
 }
 
 // Fill a fixed-size wire short string (the key and class-name fields share the shape).
@@ -534,6 +561,8 @@ void Tick(coop::net::Session* session) {
         // this prop from the intent and would otherwise author a class-default copy -- a blank
         // tape, an empty disc -- and broadcast that as truth.
         coop::prop_save_data::Publish(session, e.actor, key);
+        // The flight last on the FIFO, so no record applied behind it puts the host's copy back at rest.
+        if (!freshBirth) SendFlight(session, e.actor, p.key, loc, rot);
         // And a container's contents, which its record does not carry, once the host's echo binds it.
         coop::props::container_birth::NoteAuthoredBirth(e.actor);
         if (parked) UnparkKey(key);   // consume from BOTH the set AND the FIFO (mirror invariant)
@@ -605,13 +634,18 @@ void OnPropDropIntent(coop::net::Session& session, const coop::net::PropDropInte
     }
 }
 
-bool RefuseConsumedEcho(const std::wstring& key, uint32_t hostEid) {
-    UE_ASSERT_GAME_THREAD("prop_drop_intent::RefuseConsumedEcho");
+EchoAnswer AnswerEcho(const std::wstring& key, uint32_t hostEid, void** ownCopy) {
+    UE_ASSERT_GAME_THREAD("prop_drop_intent::AnswerEcho");
+    if (ownCopy) *ownCopy = nullptr;
     auto in = g_inFlight.find(key);
-    if (in == g_inFlight.end()) return false;
-    const bool consumed = in->second.consumed && NowMs() - in->second.authoredMs < kInFlightMs;
-    g_inFlight.erase(in);   // the host's answer to the intent: in flight no longer, consumed or not
-    if (!consumed) return false;
+    if (in == g_inFlight.end()) return EchoAnswer::NotOurs;
+    const InFlight f = in->second;
+    g_inFlight.erase(in);   // the host's answer to the intent: in flight no longer, whatever it says
+    if (NowMs() - f.authoredMs >= kInFlightMs) return EchoAnswer::NotOurs;
+    if (!f.consumed) {
+        if (ownCopy) *ownCopy = f.actor;
+        return EchoAnswer::OwnCopy;
+    }
     // By eid alone, never the key: the key may already name another prop here or on the host (a save
     // ships duplicate keys, and a re-place reuses one), and only the copy the host built from our intent
     // is to go. A host that already took our destroy has none, and this is its no-op.
@@ -622,7 +656,7 @@ bool RefuseConsumedEcho(const std::wstring& key, uint32_t hostEid) {
     }
     UE_LOGI("[PROP-DROP] CLIENT refused the host's spawn of key='%ls' eid=%u: this client authored it and its own "
             "copy was consumed before the spawn came back -- the host's copy is retired by eid", key.c_str(), hostEid);
-    return true;
+    return EchoAnswer::Refused;
 }
 
 void OnReelEjectIntent(coop::net::Session& session, const coop::net::PropDropIntentPayload& p,
