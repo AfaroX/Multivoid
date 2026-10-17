@@ -16,6 +16,7 @@
 #include "coop/player/skin_effects.h"  // own-body step FX at the wire-pose stride
 #include "coop/props/trash_channel.h"   // CtxForEid, the trash sync-time context
 #include "coop/props/prop_element_tracker.h"
+#include "coop/props/prop_drive_host.h"  // Coast: a host release streams to rest
 #include "coop/props/prop_wire_parity.h"  // PhysFlagsOf, the flags a release carries
 #include "coop/props/remote_prop.h"     // ResolveMirrorEidByActor (the bound-clump held-pose eid fallback)
 #include "coop/props/trash_collect_sync.h"
@@ -508,6 +509,7 @@ void Tick(coop::net::Session& session, void* local, void* controller) {
         // redundant and harmful: the client turned each into a trash throw that churned the drive
         // and replayed the pickup sound. A tracked trash entity stops the stream and clears the
         // cache without a PropRelease; a non-trash prop keeps its velocity release.
+        void* coastActor = nullptr;  // set below for a host release that left the prop simulating
         const uint32_t relEid = (g_lastHeldEid == coop::element::kInvalidId)
                                     ? 0u : static_cast<uint32_t>(g_lastHeldEid);
         const bool isTrashEid = (g_lastHeldEid != coop::element::kInvalidId &&
@@ -566,10 +568,23 @@ void Tick(coop::net::Session& session, void* local, void* controller) {
                 if (heldEid != coop::element::kInvalidId && heldEid != 0u)
                     coop::element::quiescence_drain::SupersedePosCorrection(heldEid, "own release");
             }
+            // The host owns everything at rest, and a let-go prop lands by each peer's own physics
+            // from the same transform and velocity, so the copies come to rest apart (docs/props.md,
+            // Known limits). The host's own release hands the prop to the driven-prop channel, which
+            // streams the host's copy until it rests and ends with its pose, so every receiver
+            // settles where the host's copy did. Only a prop still simulating: one a slot, a mount
+            // or the toolgun left frozen has nothing to converge. A client's release is not
+            // streamed: its own copy flies on its machine, and a stream would replace the flight
+            // its thrower is watching.
+            if (session.role() == coop::net::Role::Host && g_lastHeldProp.Alive() &&
+                (rel.physFlags & coop::net::propspawn_flags::kSimulatePhysics) != 0) {
+                coastActor = g_lastHeldProp.Raw();
+            }
         }
         g_lastHeldProp.Reset();
         g_lastHeldKey = {};
         g_lastHeldEid = coop::element::kInvalidId;  // the cached held eid goes with the release
+        if (coastActor) coop::prop_drive_host::Coast(coastActor, "host release");
         }
     }
 
