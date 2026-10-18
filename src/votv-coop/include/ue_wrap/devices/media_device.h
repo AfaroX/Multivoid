@@ -40,4 +40,14 @@ bool Seek(void* player, int64_t ms);
 bool Play(void* player);
 bool Pause(void* player);
 
+// The device's volume, 0..1: a TV keeps it as its own audioVolume (0..100, applied by updProperties), the
+// radio as its MediaSound component's multiplier. And a TV's brightness. False when it does not read.
+bool ReadVolume(void* device, float& out);
+bool WriteVolume(void* device, float v);
+bool ReadBrightness(void* device, float& out);
+bool WriteBrightness(void* device, float v);
+
+// The device an interface widget (ui_tvInterface_C, ui_radioInterface_C) shows, from its `radio` member.
+void* DeviceOfInterface(void* widget);
+
 }  // namespace ue_wrap::media_device

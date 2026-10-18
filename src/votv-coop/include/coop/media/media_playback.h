@@ -1,18 +1,16 @@
-// coop/media/media_playback.h -- a TV or a radio plays the same thing, at the same point, on every screen.
+// coop/media/media_playback.h -- a TV or a radio plays what its last user set, on every screen.
 //
 // Every TV and the internet radio play a link through openLink on their own media player
-// (ue_wrap/devices/media_device), and pick what plays next in `fin` with their own random roll, so each
-// peer's TV ran its own channel. Here the host's copy of a device is the one that plays: a client's
-// openLink is refused on its copy and sent to the host as an intent (MediaPlay), the host runs it, and
-// the host sends each device's link, play state and position -- on every change, every two seconds
-// while it plays, and to a joiner at its world-ready. A client opens the same link, a local file named
-// relative to its own asset folder (the pool puts the same file there under the same name), and seeks
-// when it drifts past two seconds; a client's `fin` is refused, the host's choice coming instead. A
-// pause, a resume or a scrub a client's player makes on its own copy is sent to the host the same way,
-// and a scrub on the host's goes out at once. A played file not yet pooled is shared, and every other
-// peer opens it once the pool has brought it. A client's own pick plays on its screen at once, reports
-// its position, and the host's copy joins it there before the host sends anything about it.
-// Gameplay/network layer (principle 7). Game thread.
+// (ue_wrap/devices/media_device), and roll what plays next in `fin`, so each peer's TV ran its own channel.
+// Here each device has an owner: the player who used it last. The owner's copy plays -- its picks, its
+// pauses, its scrubs, its volume, its brightness, its next-track roll -- and the owner sends the device's
+// state; every other peer, the host included, follows it: it opens the same link (a local file named
+// relative to its own asset folder, which the media pool fills), follows the play state, seeks past two
+// seconds of drift, and takes the volume and the brightness. Only one player uses a device at a time, as
+// the base laptop: opening its interface asks the host for it, and a device in another player's hands
+// refuses the interface with a note in the chat. The host keeps the owner and the holder, relays an owning
+// client's state to the others, and sends every device's last state to a joiner.
+// Wire: MediaPlay. Gameplay/network layer (principle 7). Game thread.
 
 #pragma once
 
@@ -27,15 +25,16 @@ namespace coop::media_playback {
 // Cache the session; the watches register from Tick. Idempotent.
 void Install(coop::net::Session* session);
 
-// Per pump tick: the watches, the host's polls and sends, a client's applies. Game thread.
+// Per pump tick: the watches, the owner's polls and sends, a follower's applies. Game thread.
 void Tick();
 
 // A MediaPlay chunk. Game thread.
 void OnChunk(const coop::net::BlobChunkPayload& p, uint8_t senderSlot);
 
-// HOST: a joiner's world is up -- every device that has a link.
+// HOST: a joiner's world is up -- every device that has a state.
 void QueueConnectBroadcastForSlot(int peerSlot);
 
+// A peer left: the devices it held are free, and the host takes the ones it owned.
 void OnPeerGone(uint8_t slot);
 void OnDisconnect();
 

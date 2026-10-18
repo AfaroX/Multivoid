@@ -49,19 +49,24 @@ does not (`coop/media/media_frames`).
 
 Every TV (`prop_tv2_C` and its variants) and the internet radio (`prop_radio_internet_C`) play a link
 through `openLink(struct_tv {name, link, isUrl}, pausePlayer)` on their media player, and roll what plays
-next in `fin`. The host's copy of a device plays: a client's `openLink` is refused on its copy and sent
-as an intent, and a client's `fin` is refused. The host sends each device's link, play state and
-position on every change, every two seconds while it plays, and to a joiner at its world-ready; a
-device the host's world was already playing is found from its player's url. A local file's link is
-sent relative to the asset folder (`@assets:`) and rebuilt from the receiver's own, since the absolute
-path names each machine's user. A client opens the same link, follows the play state, and seeks when it
-drifts past two seconds. A pause, a resume or a scrub its own player makes is sent to the host as an
-intent, and a scrub on the host's goes out at once: a position further from where play would have put it
-than a second and a half is a scrub. A client's own pick plays on its screen at once -- nobody's
-download holds it back -- and reports its position every two seconds; the host's copy opens it as soon as
-the file is there, joins that position once it has settled, and only then sends its state, so no screen
-is pulled back to the start. Any other peer opens a link to a file the pool has not brought yet once it
-lands, and seeks to where the host is (`coop/media/media_playback`).
+next in `fin`. Each device has an owner: the player who used it last, the host until anyone does. The
+owner's copy plays -- its picks, pauses, scrubs, volume, brightness and next-track roll -- and the owner
+sends the device's state on every change and every two seconds while it plays; the host relays an owning
+client's state to everyone else and sends every device's last state to a joiner at its world-ready. A
+position further from where play would have put it than a second and a half is a scrub, and goes out at
+once. Every other peer, the host included, follows: it opens the same link, follows the play state, seeks
+when it drifts past two seconds, and takes the volume (a TV's `audioVolume`, the radio's sound's volume
+multiplier) and the brightness. A local file's link is sent relative to the asset folder (`@assets:`) and
+rebuilt from the receiver's own, since the absolute path names each machine's user; a peer the pool has
+not brought the file to yet opens it once it lands and seeks to where the owner is, so nobody's download
+holds the owner's screen back.
+
+Only one player uses a device at a time, as with the base laptop. Opening a TV's or a radio's interface
+asks the host for it: the host keeps each device's owner and holder, and a device in another player's
+hands refuses the interface and its `openLink` with "This TV is being used by <name>." in the chat. Closing
+the interface frees it; the host also frees a holder that has said nothing for eight seconds, and a player
+who leaves frees what they held and hands what they owned to the host. `fin` runs only on the owner's copy
+(`coop/media/media_playback`).
 
 ## Who owns what
 
@@ -70,7 +75,8 @@ lands, and seeks to where the host is (`coop/media/media_playback`).
 | the pool | the host | the list on each change; a client's share and requests are intents |
 | a pooled file | its sharer, then the host | pieces from the host's disk to whoever asks |
 | a frame's or a poster's image | the host at rest, the picking client for a moment | the prop's save record |
-| what a TV or a radio plays | the host | the link, the play state and the position; a client's press is an intent |
+| what a TV or a radio plays | its last user; the host keeps who | the link, the play state, the position, the volume and the brightness |
+| who is using a TV or a radio | the host | a claim when the interface opens, a release when it closes |
 
 ## Wire messages
 
@@ -78,14 +84,13 @@ lands, and seeks to where the host is (`coop/media/media_playback`).
 |---|---|---|
 | `MediaPool` | host to all; client to host; host to one client | the pool; a share, a removal or a request for a file |
 | `MediaChunk` (bulk, Media lane) | either direction, to the asker | one piece of a pooled file |
-| `MediaPlay` | host to all; client to host | a device's link, play state and position; a client's open, play, pause or scrub |
+| `MediaPlay` | host to all; client to host | a device's owner, holder, link, play state, position, volume and brightness; a client's claim or release |
 
 ## Known limits
 
 | Limit | Status |
 |---|---|
 | A file is fetched only while both players are in the session; a pooled file the host does not hold yet waits for its sharer | `[V]` |
-| A TV's volume and brightness cross on its save record from the host only; a client's change of them stays on its screen | `[V]` the record lane carries what a client holds or just let go of |
 | A video's position is followed to within two seconds, not frame by frame | `[V]` by design: a closer follow would seek often |
 | The radio's built-in stations (`prop_radio_local_C`) are not synced | `[V]` they play the game's own sounds, not the asset folder |
 

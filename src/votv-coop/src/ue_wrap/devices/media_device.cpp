@@ -159,6 +159,91 @@ bool Seek(void* player, int64_t ms) {
 }
 
 bool Play(void* player) { bool ok = false; return CallBool(player, L"Play", ok) && ok; }
+
+namespace {
+
+void* ObjectAt(void* obj, R::InstanceOffset& off) {
+    if (!obj) return nullptr;
+    const int32_t o = off.Of(obj);
+    if (o < 0) return nullptr;
+    void* p = nullptr;
+    std::memcpy(&p, static_cast<const uint8_t*>(obj) + o, sizeof(p));
+    return (p && R::IsLive(p)) ? p : nullptr;
+}
+
+void* SoundOf(void* device) {
+    static R::InstanceOffset sOff(L"MediaSound");
+    return ObjectAt(device, sOff);
+}
+
+// A TV re-applies its own fields (volume, brightness, squeeze) through updProperties.
+bool UpdProperties(void* device) {
+    void* fn = R::FindDispatchFunctionCached(R::ClassOf(device), L"updProperties");
+    if (!fn) return false;
+    ParamFrame f(fn);
+    return f.valid() && Call(device, f);
+}
+
+}  // namespace
+
+bool ReadVolume(void* device, float& out) {
+    if (KindOf(device) == Kind::Tv) {
+        static R::InstanceOffset sOff(L"audioVolume");
+        const int32_t o = sOff.Of(device);
+        if (o < 0) return false;
+        int32_t v = 0;
+        std::memcpy(&v, static_cast<const uint8_t*>(device) + o, sizeof(v));
+        out = static_cast<float>(v) / 100.0f;
+        return true;
+    }
+    void* snd = SoundOf(device);
+    static R::InstanceOffset sMul(L"VolumeMultiplier");
+    const int32_t o = snd ? sMul.Of(snd) : -1;
+    if (o < 0) return false;
+    std::memcpy(&out, static_cast<const uint8_t*>(snd) + o, sizeof(out));
+    return true;
+}
+
+bool WriteVolume(void* device, float v) {
+    if (v < 0.f) v = 0.f;
+    if (KindOf(device) == Kind::Tv) {
+        static R::InstanceOffset sOff(L"audioVolume");
+        const int32_t o = sOff.Of(device);
+        if (o < 0) return false;
+        const int32_t iv = static_cast<int32_t>(v * 100.0f + 0.5f);
+        std::memcpy(static_cast<uint8_t*>(device) + o, &iv, sizeof(iv));
+        return UpdProperties(device);
+    }
+    void* snd = SoundOf(device);
+    void* fn = snd ? R::FindFunction(R::ClassOf(snd), L"SetVolumeMultiplier") : nullptr;
+    if (!fn) return false;
+    ParamFrame f(fn);
+    return f.valid() && f.Set<float>(L"NewVolumeMultiplier", v) && Call(snd, f);
+}
+
+bool ReadBrightness(void* device, float& out) {
+    if (KindOf(device) != Kind::Tv) return false;
+    static R::InstanceOffset sOff(L"brightness");
+    const int32_t o = sOff.Of(device);
+    if (o < 0) return false;
+    std::memcpy(&out, static_cast<const uint8_t*>(device) + o, sizeof(out));
+    return true;
+}
+
+bool WriteBrightness(void* device, float v) {
+    if (KindOf(device) != Kind::Tv) return false;
+    static R::InstanceOffset sOff(L"brightness");
+    const int32_t o = sOff.Of(device);
+    if (o < 0) return false;
+    std::memcpy(static_cast<uint8_t*>(device) + o, &v, sizeof(v));
+    return UpdProperties(device);
+}
+
+void* DeviceOfInterface(void* widget) {
+    static R::InstanceOffset sOff(L"radio");
+    void* d = ObjectAt(widget, sOff);
+    return KindOf(d) == Kind::None ? nullptr : d;
+}
 bool Pause(void* player) { bool ok = false; return CallBool(player, L"Pause", ok) && ok; }
 
 }  // namespace ue_wrap::media_device
