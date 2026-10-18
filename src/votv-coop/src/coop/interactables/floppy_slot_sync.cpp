@@ -2,7 +2,7 @@
 
 #include "coop/interactables/floppy_slot_sync.h"
 
-#include "coop/comms/chat_feed.h"  // ToUtf8
+#include "coop/text/utf8_codec.h"  // ToUtf8Exact: a row keeps its line breaks
 #include "coop/interactables/laptop_buffer_sync.h"  // the quad's shadow primes after a laptop apply
 #include "coop/net/blob_chunks.h"
 #include "coop/net/session.h"
@@ -92,7 +92,7 @@ void PutU32(std::vector<uint8_t>& b, uint32_t v) {
 // A row or a JSON can be long, so both take a 32-bit length; the reader bounds them against the
 // blob it is reading out of.
 void PutStr32(std::vector<uint8_t>& b, const std::wstring& w) {
-    const std::string u = coop::chat_feed::ToUtf8(w);
+    const std::string u = coop::text::ToUtf8Exact(w);
     PutU32(b, static_cast<uint32_t>(u.size()));
     b.insert(b.end(), u.begin(), u.end());
 }

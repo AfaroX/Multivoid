@@ -11,6 +11,40 @@
 
 namespace coop::text {
 
+namespace {
+
+void AppendUtf8(std::string& s, uint32_t cp) {
+    if (cp < 0x80) {
+        s.push_back(static_cast<char>(cp));
+    } else if (cp < 0x800) {
+        s.push_back(static_cast<char>(0xC0 | (cp >> 6)));
+        s.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+    } else if (cp < 0x10000) {
+        s.push_back(static_cast<char>(0xE0 | (cp >> 12)));
+        s.push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3F)));
+        s.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+    } else {
+        s.push_back(static_cast<char>(0xF0 | (cp >> 18)));
+        s.push_back(static_cast<char>(0x80 | ((cp >> 12) & 0x3F)));
+        s.push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3F)));
+        s.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+    }
+}
+
+}  // namespace
+
+std::string ToUtf8Exact(const std::wstring& w) {
+    std::string s;
+    s.reserve(w.size() * 2);
+    for (size_t i = 0; i < w.size(); ) {
+        uint32_t cp = 0;
+        i += DecodeCodepoint(w, i, &cp);
+        if (cp >= 0xD800 && cp <= 0xDFFF) continue;  // unpaired surrogate -- not a character
+        AppendUtf8(s, cp);
+    }
+    return s;
+}
+
 std::string ToUtf8(const std::wstring& w) {
     // Hand-rolled rather than WideCharToMultiByte because it must be defined on
     // the two inputs the API is coy about: an UNPAIRED surrogate (dropped) and a
@@ -28,21 +62,7 @@ std::string ToUtf8(const std::wstring& w) {
         // TAB (SanitizeNickname denies everything below 0x20), so keeping it
         // costs the name path nothing and preserves the chat path exactly.
         if (cp < 0x20 && cp != 0x09) continue;
-        if (cp < 0x80) {
-            s.push_back(static_cast<char>(cp));
-        } else if (cp < 0x800) {
-            s.push_back(static_cast<char>(0xC0 | (cp >> 6)));
-            s.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
-        } else if (cp < 0x10000) {
-            s.push_back(static_cast<char>(0xE0 | (cp >> 12)));
-            s.push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3F)));
-            s.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
-        } else {
-            s.push_back(static_cast<char>(0xF0 | (cp >> 18)));
-            s.push_back(static_cast<char>(0x80 | ((cp >> 12) & 0x3F)));
-            s.push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3F)));
-            s.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
-        }
+        AppendUtf8(s, cp);
     }
     return s;
 }
