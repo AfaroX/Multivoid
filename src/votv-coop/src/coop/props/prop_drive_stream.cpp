@@ -12,10 +12,13 @@
 #include "coop/player/hand_item.h"
 #include "coop/props/remote_prop.h"           // ResolveLiveActorByEid, IsActorUnderAnyDrive
 #include "ue_wrap/actors/prop.h"
+#include "ue_wrap/core/game_thread.h"     // RegisterPreObserver: the use press
 #include "ue_wrap/core/hot_path_guard.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/engine/engine.h"
+#include "ue_wrap/engine/engine_mainplayer.h"  // ReadMainPlayerLookAtActor
+#include "ue_wrap/facts/function_row.h"
 
 #include <windows.h>
 
@@ -340,6 +343,47 @@ void OnEnd(const coop::net::PropDriveEndPayload& p) {
     }
     g_drives.erase(it);
     AdvanceGen(g_endedGen, p.eid, p.gen);
+}
+
+namespace {
+
+UE_FACT_FN(kRowUseInput, "prop_drive_stream", L"mainPlayer_C", L"InpActEvt_use_K2Node_InputActionEvent_41", Declared);
+bool g_grabYieldInstalled = false;
+uint64_t g_grabYields = 0;
+
+// This player pressed use: a prop this stream parks under the crosshair gets its physics back first, so the
+// game's grab, which takes only a simulating body, takes it. The drive goes; the generation stays open, so a
+// grab that does not happen leaves the next pose to park it again and the end edge to land it, and one that
+// does is yielded to the hand at the next pose or end, as the tick yields one.
+void OnUseInputPre(void* self, void* /*function*/, void* /*params*/) {
+    if (g_drives.empty() || !self) return;
+    void* target = ue_wrap::engine::ReadMainPlayerLookAtActor(self);
+    if (!target) return;
+    for (auto it = g_drives.begin(); it != g_drives.end(); ++it) {
+        if (it->second.d.LiveActor() != target) continue;
+        GiveBackPhysics(it->second, target);
+        ++g_grabYields;
+        UE_LOGI("[PROP-DRIVE] CLIENT eid=%u gen=%u -- this player reaches for it mid-stream; physics back for the grab",
+                it->first, static_cast<unsigned>(it->second.gen));
+        g_drives.erase(it);
+        return;
+    }
+}
+
+}  // namespace
+
+void InstallGrabYield() {
+    if (g_grabYieldInstalled) return;
+    const ue_wrap::facts::Resolved fn = ue_wrap::facts::Resolve(kRowUseInput);
+    if (!fn) return;   // mainPlayer_C not loaded yet: asked again next tick
+    if (!ue_wrap::game_thread::RegisterPreObserver(fn, &OnUseInputPre)) {
+        UE_LOGW("prop_drive_stream: the use-press observer did not register -- a prop under the host's stream "
+                "stays ungrabbable here until it rests");
+        g_grabYieldInstalled = true;
+        return;
+    }
+    g_grabYieldInstalled = true;
+    UE_LOGI("prop_drive_stream: the use-press observer is live -- a prop still moving on the host is grabbable here");
 }
 
 bool IsParked(void* actor) {
