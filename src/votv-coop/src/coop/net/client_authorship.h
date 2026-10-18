@@ -137,6 +137,7 @@ constexpr ClientAuthorship AuthorshipOf(ReliableKind k) {
     case ReliableKind::MediaPlay:
     case ReliableKind::CordPlug:
     case ReliableKind::PropToolFlags:
+    case ReliableKind::PropDriveEnd:      // the end of a stream the sender ran; relayed
         return ClientAuthorship::Client;
     case ReliableKind::EntitySpawn:
     case ReliableKind::EntityDestroy:
@@ -179,7 +180,6 @@ constexpr ClientAuthorship AuthorshipOf(ReliableKind k) {
     case ReliableKind::ChatLine:
     case ReliableKind::AuthChallenge:
     case ReliableKind::LightGroupState:
-    case ReliableKind::PropDriveEnd:
     case ReliableKind::GrabRefused:
     case ReliableKind::JoinPhaseNote:
     case ReliableKind::UpgradeLevels:

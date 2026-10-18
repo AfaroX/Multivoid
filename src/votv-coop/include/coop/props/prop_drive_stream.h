@@ -25,12 +25,13 @@ struct PropDriveEndPayload;
 
 namespace coop::prop_drive_stream {
 
-// CLIENT game tick: drain what arrived, park and drive each prop, advance every live drive (a gap
-// freezes at the last pose). No-op on the host and with nothing to drain.
+// Any peer's game tick: drain what the other peers streamed, park and drive each prop, advance every live
+// drive (a gap freezes at the last pose). A stream of a prop this peer owns is followed only when its claim
+// is newer, and this peer's own row yields to it; of two claims that crossed, the coin picks.
 void TickApplyAndDrive(coop::net::Session& s);
 
-// CLIENT, game thread: the host closed a prop's stream. Validated at the router.
-void OnEnd(const coop::net::PropDriveEndPayload& p);
+// Game thread: the peer in `senderSlot` closed a prop's stream. Validated at the router.
+void OnEnd(const coop::net::PropDriveEndPayload& p, int senderSlot);
 
 // True while this stream has `actor` parked: its pose is the host's stream's, so a converge that
 // would move it or re-run its init() leaves it alone, as it leaves a held prop. Game thread.

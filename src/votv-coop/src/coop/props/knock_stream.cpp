@@ -3,8 +3,12 @@
 #include "coop/props/knock_stream.h"
 
 #include "coop/net/session.h"
+#include "coop/element/registry.h"
 #include "coop/props/prop_drive_host.h"
-#include "coop/props/prop_element_tracker.h"
+#include "coop/props/prop_drive_stream.h"   // IsParked: another peer streams it
+#include "coop/props/remote_prop.h"         // IsActorUnderAnyDrive: another peer holds or coasts it
+#include "coop/player/local_streams.h"      // LocalPlayer, LastHeldActor: this player and its hand
+#include "coop/player/players_registry.h"   // IsPuppet: another player's body
 
 #include "ue_wrap/actors/prop.h"
 #include "ue_wrap/core/log.h"
@@ -15,6 +19,7 @@
 #include <atomic>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 
 namespace coop::props::knock_stream {
 namespace {
@@ -31,14 +36,34 @@ constexpr int kTag = 0x4B4E4F43;  // 'KNOC'
 constexpr float kMovingCmS = 5.0f;
 
 std::atomic<coop::net::Session*> g_session{nullptr};
+R::ParamOffset g_pOther(L"OtherActor");
+
+// Another peer moves it here: its stream, its hand or its coast.
+bool OthersMove(void* actor) {
+    return actor && (coop::prop_drive_stream::IsParked(actor) || coop::remote_prop::IsActorUnderAnyDrive(actor));
+}
+
+// This peer moved `other`: this player, the prop in its hand, or a prop it streams.
+bool Mine(void* other) {
+    return other && (other == coop::local_streams::LocalPlayer() || other == coop::local_streams::LastHeldActor() ||
+                     coop::prop_drive_host::OwnsActor(other));
+}
 bool g_watched = false, g_saidLive = false;
 uint64_t g_knocks = 0;
 
 void OnHitPost(const sg::Call& c) {
     auto* s = g_session.load(std::memory_order_acquire);
-    if (!s || !s->connected() || s->role() != coop::net::Role::Host || !c.object) return;
+    if (!s || !s->connected() || !c.object) return;
     void* prop = R::OuterOf(c.object);  // the component's outer is the prop it rides on
-    if (!prop || !ue_wrap::prop::IsDescendantOfProp(prop)) return;
+    if (!prop || !ue_wrap::prop::IsDescendantOfProp(prop) || OthersMove(prop)) return;
+    void* other = nullptr;
+    const int32_t oo = c.locals ? g_pOther.Of(c.function) : -1;
+    if (oo >= 0) std::memcpy(&other, c.locals + oo, sizeof(other));
+    // Who set it moving: this peer when the other actor is its own; the host for a world knock nobody's
+    // player or stream caused. Another player's body or another peer's prop is that peer's knock.
+    const bool host = s->role() == coop::net::Role::Host;
+    const bool theirs = other && (OthersMove(other) || coop::players::Registry::Get().IsPuppet(other));
+    if (!Mine(other) && !(host && !theirs) && !coop::prop_drive_host::OwnsActor(prop)) return;
     const ue_wrap::prop::VelocityState v = ue_wrap::prop::GetPhysicsVelocity(prop);
     if (!v.ok) return;
     const float sp = std::sqrt(v.linearCmS.X * v.linearCmS.X + v.linearCmS.Y * v.linearCmS.Y +
@@ -46,7 +71,7 @@ void OnHitPost(const sg::Call& c) {
     if (sp < kMovingCmS) return;
     // A prop with no element id has no copy a peer could move -- a client's drop the host spawned this
     // very tick, before its id is minted, is the usual one -- so its knock is no news.
-    const coop::element::ElementId eid = coop::prop_element_tracker::GetPropElementIdForActor(prop);
+    const coop::element::ElementId eid = coop::element::Registry::Get().EidForActor(prop);
     if (eid == coop::element::kInvalidId || eid == 0u) return;
     // Refused there for a prop in a hand; a prop already streaming restarts its rest clock.
     coop::prop_drive_host::Coast(prop, "knock");

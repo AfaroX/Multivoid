@@ -629,6 +629,17 @@ void OnRelease(int senderSlot, const coop::net::PropReleasePayload& payload, voi
         UE_LOGI("[PILE] CLIENT trash throw eid=%u |v|=%.1f cm/s -- frozen at release (no local physics); "
                 "the host's pose stream and its ToPile convert place it",
                 payload.elementId, linSpeed);
+    } else if (meshToActOn && payload.coasts) {
+        // The holder streams the flight on its driven-prop channel: this copy holds still at the release
+        // pose, parked, until that stream moves it, and its end hands the physics back (prop_drive_stream).
+        // Flown here on its own it would knock this world's props as if this peer had thrown it.
+        coop::prop_park::Park(propActor, meshToActOn);
+        if (propActor && linSpeed > coop::net::kThrownLinVelThreshold) {
+            ue_wrap::prop::CallPropThrown(propActor, localPlayer);
+            coop::prop_sound::PlayThrowWhoosh(propActor);
+        }
+        UE_LOGI("remote_prop: RELEASE of hold %u -- the holder streams its flight; parked for the stream",
+                static_cast<unsigned>(payload.holdGen));
     } else if (meshToActOn) {
         // Simulate first, then the velocities: a kinematic body ignores a velocity write.
         coop::prop_park::Unpark(propActor, meshToActOn, /*rootSimulates=*/true);

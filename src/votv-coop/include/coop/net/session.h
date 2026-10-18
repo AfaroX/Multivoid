@@ -180,8 +180,8 @@ public:
     // Client: swap out the latest WorldActor batch, consumed once, the same way.
     bool TakeRemoteWorldActorBatch(std::vector<WorldActorPoseSnapshot>& out);
 
-    // Client: swap out the trash-clump and driven-prop poses received since the last take, newest
-    // per eid; `out` comes in empty and keeps its capacity.
+    // Swap out the trash-clump (client) and driven-prop (any peer; stamped with the origin slot) poses
+    // received since the last take, newest per eid; `out` comes in empty and keeps its capacity.
     bool TakeRemoteTrashCarryBatch(std::vector<TrashClumpPoseSnapshot>& out);
     bool TakeRemotePropDriveBatch(std::vector<PropPoseSnapshot>& out);
 
@@ -429,7 +429,7 @@ private:
     int  SerializeLocalTrashCarryBatch(uint8_t* buf);
     void StoreRemoteTrashCarryBatch(const void* data, int len, uint32_t seq);
     int  SerializeLocalPropDriveBatch(uint8_t* buf);
-    void StoreRemotePropDriveBatch(const void* data, int len, uint32_t seq);
+    void StoreRemotePropDriveBatch(int routeSlot, int peerSlot, const void* data, int len, uint32_t seq);
     // Voice receive store (session_voice.cpp): validate one VoiceFrame, queue it, host-relay it.
     // Net thread.
     void StoreVoiceFrame(int routeSlot, int peerSlot, const void* data, int len);

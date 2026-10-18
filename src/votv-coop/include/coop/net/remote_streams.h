@@ -22,6 +22,9 @@ struct OriginStreams {
     StreamSlot<RagdollPoseSnapshot>    ragdoll;
     StreamSlot<HandPoseSnapshot>       hand;
     StreamSlot<DeskCursorPoseSnapshot> deskCursor;
+    // The props this origin set moving and streams to rest (PropDrivePose), newest per eid. Per origin,
+    // since each sender numbers its datagrams on its own.
+    EidPoseMerge<PropPoseSnapshot>     propDrive;
 
     void Reset() { *this = OriginStreams{}; }
 };
@@ -37,7 +40,6 @@ struct HostStreams {
     StreamSlot<std::vector<EntityPoseSnapshot>>     npcBatch;
     StreamSlot<std::vector<WorldActorPoseSnapshot>> worldActorBatch;
     EidPoseMerge<TrashClumpPoseSnapshot>            trashCarry;
-    EidPoseMerge<PropPoseSnapshot>                  propDrive;
     std::uint32_t                                   clockRefused = 0;  // failed ValidateClock, for the line
 
     void Reset() { *this = HostStreams{}; }

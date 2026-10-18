@@ -7,10 +7,11 @@
 #include "coop/player/hand_item.h"            // IsHandAxisActor: the hotbar hand and its mirrors
 #include "coop/player/local_streams.h"        // LastHeldActor: this player's grab slot
 #include "coop/props/active_drive.h"          // NowMs
-#include "coop/props/prop_element_tracker.h"  // GetPropElementIdForActor
+#include "coop/element/registry.h"             // EidForActor: a mirror's eid as well as a local's
 #include "coop/props/prop_lifecycle.h"        // IsWireSuppressedPropClass: a class no peer holds
 #include "coop/props/prop_wire_parity.h"      // PhysFlagsOf: the flags the end edge carries
 #include "coop/props/remote_prop.h"           // IsActorUnderAnyDrive: a peer's held-prop stream
+#include "coop/props/prop_drive_stream.h"     // IsParked: another peer's stream moves it here
 #include "ue_wrap/actors/prop.h"
 #include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/hot_path_guard.h"
@@ -67,8 +68,11 @@ std::vector<Driven> g_driven;   // game thread only
 size_t              g_turn = 0; // where the next tick's publishing starts, so no prop waits forever
 // The claim generation is PER PROP: the receiver's closed-generation gate is keyed by eid and
 // compares in a signed 8-bit window, so a counter shared by every prop would read a re-claim as
-// older than the closed one after enough claims of other props in between. Outlives the row.
+// older than the closed one after enough claims of other props in between. Outlives the row, and
+// takes in every other peer's generation for the prop, so this peer's next claim is newer than all.
 std::unordered_map<uint32_t, uint8_t> g_genByEid;
+
+bool GenAfter(uint8_t a, uint8_t b) { return static_cast<int8_t>(a - b) > 0; }
 
 Driven* Find(void* actor) {
     for (Driven& d : g_driven)
@@ -78,8 +82,8 @@ Driven* Find(void* actor) {
 
 // A prop in a hand: this player's grab slot, a peer's held-prop stream, or the hotbar hand axis
 // (the local hand actor and every peer's display mirror), which the hand lane owns outright.
-bool HeldBySomeone(void* actor) {
-    return actor == coop::local_streams::LastHeldActor() ||
+bool HeldBySomeone(void* actor, bool ownHandLetGo = false) {
+    return (!ownHandLetGo && actor == coop::local_streams::LastHeldActor()) ||
            coop::remote_prop::IsActorUnderAnyDrive(actor) ||
            coop::hand_item::IsHandAxisActor(actor);
 }
@@ -120,17 +124,18 @@ void SendEnd(coop::net::Session& s, const Driven& d, void* actor, const ue_wrap:
         p.angVelX = v.angularDegS.X; p.angVelY = v.angularDegS.Y; p.angVelZ = v.angularDegS.Z;
     }
     s.SendReliable(coop::net::ReliableKind::PropDriveEnd, &p, sizeof(p));
-    UE_LOGI("[PROP-DRIVE] HOST END eid=%u gen=%u %s -> (%.1f,%.1f,%.1f) |v|=%.1f cm/s flags=0x%02x",
+    UE_LOGI("[PROP-DRIVE] OWN END eid=%u gen=%u %s -> (%.1f,%.1f,%.1f) |v|=%.1f cm/s flags=0x%02x",
             d.eid, static_cast<unsigned>(d.gen), why, loc.X, loc.Y, loc.Z, v.ok ? lin : 0.f,
             static_cast<unsigned>(p.physFlags));
 }
 
-// A new row for `actor` when the channel can carry it: a keyed prop with a host element id, in no
-// hand, of a class peers hold. Null otherwise. `claimed` false opens it coasting.
-Driven* Open(void* actor, bool claimed, const char* why) {
+// A new row for `actor` when the channel can carry it: a keyed prop with an element id, in no hand and
+// under no other peer's stream, of a class peers hold. Null otherwise. `claimed` false opens it coasting.
+Driven* Open(void* actor, bool claimed, const char* why, bool ownHandLetGo = false) {
     if (!PR::IsDescendantOfProp(actor)) return nullptr;
-    if (HeldBySomeone(actor)) return nullptr;   // the held-prop lane owns a prop in a hand
-    const coop::element::ElementId eid = coop::prop_element_tracker::GetPropElementIdForActor(actor);
+    if (HeldBySomeone(actor, ownHandLetGo)) return nullptr;   // the held-prop lane owns a prop in a hand
+    if (coop::prop_drive_stream::IsParked(actor)) return nullptr;   // another peer moves it here
+    const coop::element::ElementId eid = coop::element::Registry::Get().EidForActor(actor);
     if (eid == coop::element::kInvalidId || eid == 0u) {
         // A feeder asks again every pass while the tie holds, so the line is per actor, not per pass.
         static void* sRefusedSaid = nullptr;
@@ -139,7 +144,7 @@ Driven* Open(void* actor, bool claimed, const char* why) {
             // A class the wire never expresses has no copy on any peer to move, so its motion is
             // parity and its refusal no news.
             if (!coop::prop_lifecycle::IsWireSuppressedPropClass(R::ClassNameOf(actor)))
-                UE_LOGW("[PROP-DRIVE] HOST refused: actor %p has no host element id (%s)", actor, why);
+                UE_LOGW("[PROP-DRIVE] OWN refused: actor %p has no element id (%s)", actor, why);
         }
         return nullptr;
     }
@@ -157,7 +162,7 @@ Driven* Open(void* actor, bool claimed, const char* why) {
     d.gen = gen;
     d.lastMoveMs = coop::active_drive::NowMs();
     g_driven.push_back(std::move(d));
-    UE_LOGI("[PROP-DRIVE] HOST %s eid=%u gen=%u key='%ls' (%s) -- %zu driven",
+    UE_LOGI("[PROP-DRIVE] OWN %s eid=%u gen=%u key='%ls' (%s) -- %zu driven",
             claimed ? "CLAIM" : "COAST", g_driven.back().eid, static_cast<unsigned>(g_driven.back().gen),
             keyW.c_str(), why, g_driven.size());
     return &g_driven.back();
@@ -173,7 +178,7 @@ void Claim(void* actor, const char* reason) {
         if (!d->claimed) {
             d->claimed     = true;   // a re-claim while coasting: the stream simply continues
             d->nextProbeMs = 0;
-            UE_LOGI("[PROP-DRIVE] HOST re-claim eid=%u (%s)", d->eid, why);
+            UE_LOGI("[PROP-DRIVE] OWN re-claim eid=%u (%s)", d->eid, why);
         }
         return;
     }
@@ -193,6 +198,13 @@ void Coast(void* actor, const char* reason) {
     Open(actor, /*claimed=*/false, reason ? reason : "");
 }
 
+void CoastLetGo(void* actor) {
+    UE_ASSERT_GAME_THREAD("prop_drive_host::CoastLetGo");
+    if (!actor) return;
+    if (Driven* d = Find(actor)) { d->claimed = false; d->nextProbeMs = 0; d->lastMoveMs = coop::active_drive::NowMs(); return; }
+    Open(actor, /*claimed=*/false, "release", /*ownHandLetGo=*/true);
+}
+
 size_t CoastingCount() {
     size_t n = 0;
     for (const Driven& d : g_driven)
@@ -207,7 +219,7 @@ void Release(void* actor) {
     d->claimed     = false;
     d->lastMoveMs  = coop::active_drive::NowMs();   // the rest clock starts now
     d->nextProbeMs = 0;                              // and the probe goes back to per tick
-    UE_LOGI("[PROP-DRIVE] HOST release eid=%u -- coasting until it rests", d->eid);
+    UE_LOGI("[PROP-DRIVE] OWN release eid=%u -- coasting until it rests", d->eid);
 }
 
 void OnPeerWorldReady() {
@@ -224,7 +236,7 @@ void OnPeerWorldReady() {
         d.resend      = true;
         d.nextProbeMs = 0;
     }
-    UE_LOGI("[PROP-DRIVE] HOST world-ready re-send armed for %zu driven prop(s)", g_driven.size());
+    UE_LOGI("[PROP-DRIVE] OWN world-ready re-send armed for %zu driven prop(s)", g_driven.size());
 }
 
 void Tick(coop::net::Session& s) {
@@ -241,7 +253,7 @@ void Tick(coop::net::Session& s) {
         void* actor = d.ref.Get();
         if (!actor) {
             // The destroy crossed on its own seam; a receiver drops a drive whose actor died.
-            UE_LOGI("[PROP-DRIVE] HOST eid=%u died -- dropped", d.eid);
+            UE_LOGI("[PROP-DRIVE] OWN eid=%u died -- dropped", d.eid);
             d.dead = true;
             continue;
         }
@@ -272,7 +284,7 @@ void Tick(coop::net::Session& s) {
         const bool poseRead = E::TryGetActorLocation(actor, loc) && E::TryGetActorRotation(actor, rot);
         if (!poseRead && !d.unreadSaid) {
             d.unreadSaid = true;
-            UE_LOGW("[PROP-DRIVE] HOST eid=%u -- its location or rotation could not be read; it streams nothing and "
+            UE_LOGW("[PROP-DRIVE] OWN eid=%u -- its location or rotation could not be read; it streams nothing and "
                     "rests", d.eid);
         }
         if (poseRead && Moved(d, loc, rot)) {
@@ -293,7 +305,7 @@ void Tick(coop::net::Session& s) {
             d.lastMoveMs  = now;
             d.nextProbeMs = 0;
             if ((++sPublished % 120) == 1)
-                UE_LOGI("[PROP-DRIVE] HOST publish eid=%u gen=%u %s -> (%.1f,%.1f,%.1f)",
+                UE_LOGI("[PROP-DRIVE] OWN publish eid=%u gen=%u %s -> (%.1f,%.1f,%.1f)",
                         d.eid, static_cast<unsigned>(d.gen), d.claimed ? "claimed" : "coasting",
                         loc.X, loc.Y, loc.Z);
             continue;
@@ -311,6 +323,32 @@ void Tick(coop::net::Session& s) {
     g_turn = n ? (g_turn + joined) % n : 0;
     g_driven.erase(std::remove_if(g_driven.begin(), g_driven.end(),
                                   [](const Driven& d) { return d.dead; }),
+                   g_driven.end());
+}
+
+bool Owns(uint32_t eid, uint8_t* gen) {
+    for (const Driven& d : g_driven)
+        if (!d.dead && d.eid == eid) { if (gen) *gen = d.gen; return true; }
+    return false;
+}
+
+bool OwnsActor(void* actor) { return actor && Find(actor) != nullptr; }
+
+void NoteSeenGen(uint32_t eid, uint8_t gen) {
+    if (eid == 0 || gen == 0) return;
+    auto it = g_genByEid.find(eid);
+    if (it == g_genByEid.end()) g_genByEid.emplace(eid, gen);
+    else if (GenAfter(gen, it->second)) it->second = gen;
+}
+
+void Yield(uint32_t eid) {
+    for (Driven& d : g_driven) {
+        if (d.dead || d.eid != eid) continue;
+        d.dead = true;
+        UE_LOGI("[PROP-DRIVE] OWN eid=%u gen=%u -- another peer's newer stream has it; this one stops", eid,
+                static_cast<unsigned>(d.gen));
+    }
+    g_driven.erase(std::remove_if(g_driven.begin(), g_driven.end(), [](const Driven& d) { return d.dead; }),
                    g_driven.end());
 }
 

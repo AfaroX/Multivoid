@@ -628,7 +628,6 @@ void Tick(coop::net::Session& session, void* local, void* controller) {
         // redundant and harmful: the client turned each into a trash throw that churned the drive
         // and replayed the pickup sound. A tracked trash entity stops the stream and clears the
         // cache without a PropRelease; a non-trash prop keeps its velocity release.
-        void* coastActor = nullptr;  // set below for a host release that left the prop simulating
         const uint32_t relEid = (g_lastHeldEid == coop::element::kInvalidId)
                                     ? 0u : static_cast<uint32_t>(g_lastHeldEid);
         const bool isTrashEid = (g_lastHeldEid != coop::element::kInvalidId &&
@@ -680,11 +679,17 @@ void Tick(coop::net::Session& session, void* local, void* controller) {
             }
             // A part with no portable key streamed no pose, so its let-go names nothing a receiver holds.
             const bool streamed = !g_lastHeldIsPart || !g_lastHeldPartKey.empty();
-            // The last toucher streams what it let go of until it rests: a client always, and the host for
-            // what the driven-prop channel cannot carry -- a part, which has no element id.
-            const bool coastHere = streamed && rel.hasPose && g_lastHeldProp.Alive() &&
-                                   (rel.physFlags & coop::net::propspawn_flags::kSimulatePhysics) != 0 &&
-                                   (session.role() == coop::net::Role::Client || relEid == 0);
+            // The last toucher streams what it let go of until it rests. A prop with an element id goes on
+            // this peer's driven-prop channel, which also carries what it knocks (coop/props/knock_stream);
+            // the release says so, and a receiver holds its copy still for the stream. A part has no
+            // element id, so it coasts on the held-prop stream instead.
+            const bool moving = streamed && rel.hasPose && g_lastHeldProp.Alive() &&
+                                (rel.physFlags & coop::net::propspawn_flags::kSimulatePhysics) != 0;
+            const bool coastHere = moving && relEid == 0;
+            if (moving && relEid != 0) {
+                coop::prop_drive_host::CoastLetGo(g_lastHeldProp.Raw());
+                rel.coasts = coop::prop_drive_host::OwnsActor(g_lastHeldProp.Raw()) ? 1 : 0;
+            }
             if (coastHere) {
                 g_coast = Coast{};
                 g_coast.ref.Set(g_lastHeldProp.Raw());
@@ -702,10 +707,6 @@ void Tick(coop::net::Session& session, void* local, void* controller) {
             // it to the driven-prop channel instead, which streams the host's copy until it rests and ends
             // with its pose; every other let-go coasts above. Only a prop still simulating: one a slot, a
             // mount or the toolgun left frozen has nothing to converge.
-            if (!coastHere && session.role() == coop::net::Role::Host && g_lastHeldProp.Alive() && relEid != 0 &&
-                (rel.physFlags & coop::net::propspawn_flags::kSimulatePhysics) != 0) {
-                coastActor = g_lastHeldProp.Raw();
-            }
         }
         coop::props::record_sync::NoteTouched(g_lastHeldProp.Raw());  // and for a while after it lets go
         g_lastHeldProp.Reset();
@@ -713,7 +714,6 @@ void Tick(coop::net::Session& session, void* local, void* controller) {
         g_lastHeldEid = coop::element::kInvalidId;  // the cached held eid goes with the release
         g_lastHeldIsPart = false;
         g_lastHeldPartKey.clear();
-        if (coastActor) coop::prop_drive_host::Coast(coastActor, "host release");
         }
     }
 

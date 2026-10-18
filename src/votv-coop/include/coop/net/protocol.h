@@ -1197,6 +1197,9 @@ struct PropPoseSnapshot {
 };
 static_assert(sizeof(PropPoseSnapshot) == 64, "PropPoseSnapshot must be 64 bytes");
 inline constexpr uint8_t kPoseCoast = 0x01;
+// A driven-prop pose's origin slot, stamped by the receiving session into the flags' high nibble: the
+// peer that set the prop moving and streams it to rest.
+inline constexpr uint8_t PropDriveOwnerOf(const PropPoseSnapshot& p) { return static_cast<uint8_t>(p.flags >> 4); }
 
 struct PropPosePacket {
     PacketHeader     header;  // 20
@@ -1522,7 +1525,8 @@ struct PropReleasePayload {
     float    locX, locY, locZ;           // world cm at the edge
     float    rotPitch, rotYaw, rotRoll;  // degrees at the edge
     uint8_t  hasPose;    // 0: the prop was gone at the edge (pocketed), and the transform is unset
-    uint8_t  _pad[3];
+    uint8_t  coasts;     // 1: the holder streams its motion on the driven-prop channel until it rests
+    uint8_t  _pad[2];
 };
 static_assert(sizeof(PropReleasePayload) == 92, "PropReleasePayload must be 92 bytes");
 // Every reliable payload carries this guard: a payload past one datagram's budget would be

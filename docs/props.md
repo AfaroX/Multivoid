@@ -190,17 +190,19 @@ gave it. A release for a prop something else moves now -- this peer's own grab, 
 host's driven-prop channel -- changes nothing but its own hold. Above a launch speed the receiver
 also calls the prop's own thrown event, so the sound and the trail come from the engine.
 
-A prop let go of while it still moves stays its last toucher's until it rests. The host's own release of a
-prop with an element id hands it to the driven-prop channel (`coop/props/prop_drive_host`), which streams
-the host's copy until it rests and ends with its pose. Every other let-go coasts on the held-prop stream:
-the toucher -- a client, or the host with a door or another part -- keeps streaming the pose under the
-hold's generation, marked as a coast, and sends the release only once its copy has been still for 0.4 s
-(or after 20 s), with the pose it rested at. A receiver places a coasting copy at each pose rather than
-moving it, so a body no hand holds pushes nothing with no end of mass, and every copy comes to rest where
-the toucher's did. Whoever touches it next takes it over: a use press on a coasting copy gives it its
-physics back for the grab and closes the coaster's hold there, and the coaster, seeing another hand on
-it, ends its coast. A new hold of the coaster's own ends it too. A stream that stops for half a second,
-or a holder that switches to another prop, is an implicit release.
+A prop let go of while it still moves stays its last toucher's until it rests, on any peer. A prop with an
+element id goes on the toucher's driven-prop channel (`coop/props/prop_drive_host`): its copy simulates
+as in single player, and it streams the pose until the prop rests and ends with that pose, its flags and
+its velocity. The release says so, and a receiver holds its copy still at the release pose until the
+stream moves it, so no copy flies on its own and knocks its world's props as if that peer had thrown it.
+What the flight knocks over moves on the toucher's machine by vanilla physics, and the toucher streams
+every one of those too (Knocked props, below). A part, a door, has no element id, so it coasts on the
+held-prop stream instead: the toucher keeps streaming its pose under the hold's generation, marked as a
+coast, and sends the release once it has been still for 0.4 s (or after 20 s), with the pose it rested
+at. Every other copy is placed at each pose rather than moved, so a copy no peer simulates pushes nothing
+with no end of mass. Whoever touches it next takes it over: a use press on a streamed copy gives it its
+physics back for the grab, and the stream that drove it yields to the hand. A stream that stops for half
+a second, or a holder that switches to another prop, is an implicit release.
 
 One prop has one holder. A copy another player holds is parked here, and the game's grab takes only a
 simulating body, so it cannot be grabbed out of their hand. Two grabs that land before either peer sees
@@ -250,13 +252,20 @@ does not broadcast it back (`coop/props/prop_echo_suppress`).
 
 A prop another prop strikes moving has no verb of its own, so it once moved on each peer by that peer's
 own physics and rested apart. Every prop carries `comp_physicsImpact`, whose contact report runs through
-the component's `hitCpp`; on the host, after it runs, a prop now simulating faster than 5 cm/s is put
-on the driven-prop channel, which streams it until it rests and ends with the host's pose
-(`coop/props/knock_stream`); a prop with no element id yet, such as a client's drop the host spawned that
-tick, is not. A carried prop's copy moves rather than teleports on every peer, so what a
-client's carried prop pushes over on the host streams the same way. A streamed knocked prop's copy is
-placed at each pose instead: moving, a kinematic copy pushes as if it had no end of mass, and one slid
-under a table threw the table across one screen while the host's stood still.
+the component's `hitCpp(HitComponent, OtherActor, ...)`. On every peer, after it runs, a prop now
+simulating faster than 5 cm/s goes on that peer's driven-prop channel when that peer moved it: the other
+actor is its player, the prop in its player's hand, or a prop it already streams. The host also takes a
+knock nobody's player or stream caused. So a throw into a stack topples it on the thrower's machine, by
+vanilla physics, and the thrower streams every prop of it to rest; a prop another peer streams or holds
+is parked here and starts nothing (`coop/props/knock_stream`). A prop with no element id yet is not
+streamed. A streamed copy is placed at each pose: moving, a kinematic copy pushes as if it had no end of
+mass, and one slid under a table threw the table across one screen while the host's stood still.
+
+A prop has one motion owner at a time. A claim takes the generation after every one its peer has seen
+for that prop, so the newest toucher wins on every peer: an owner whose prop arrives under another
+peer's newer generation stops streaming it and follows. Two claims under the same generation crossed in
+flight; a coin from the prop's id and both slots, the same on every peer, picks one. The host keeps each
+client's stream under its slot and relays it to the other clients (`coop/props/prop_drive_stream`).
 
 ### Who answers a hit
 
@@ -363,7 +372,7 @@ and not the burst's spray or sound, which run in the ruptured copy's own tick.
 |---|---|---|
 | a prop at rest: existence, transform, physics | the host | the birth broadcast; a client's births are intents |
 | a held prop | the holder (one at a time; a coin settles a simultaneous grab) | a per-frame stream under a generation the grab mints; the release carries the transform, the velocity and the frozen and sleep flags, and closes the generation |
-| a prop let go of while moving | its last toucher, until it rests or another hand takes it | the host's own: the driven-prop stream; any other: the held-prop stream marked as a coast, then the release with the rest pose |
+| a prop let go of or knocked while moving | its last toucher, until it rests or another peer touches it | that peer's driven-prop stream, and what it knocks with it; a part: the held-prop stream marked as a coast, then the release with the rest pose |
 | a prop's damage | the holder while held, the host otherwise | refused on every other copy; a client's swing at a prop it does not hold is an intent |
 | a prop a hook drags, and one still sliding after the hook lets go | the host | a per-tick stream while it moves; the end edge hands the velocity back |
 | a prop's key | the game, once; the host's copy wins on a mirror | never rewritten on the owner |
@@ -380,9 +389,9 @@ and not the burst's spray or sound, which run in the ruptured copy's own tick.
 |---|---|---|
 | `PropPose` (stream) | the holder, or the last toucher of a coasting prop, to all | the prop's world transform, per frame, its hold's generation, and whether it coasts |
 | `PropSpawn`, `PropDestroy` | the host to all; a destroy from either role | class, key, id, transform, physics flags, the birth scalar; the key and id |
-| `PropRelease` | the holder to all | the prop's transform, its inherited linear and angular velocity and its frozen and sleep at the edge, and the hold it closes |
-| `PropDrivePose` (stream) | the host to all | the poses of the props under a hook's drive or a broom's push that moved since their last one, with the claim generation |
-| `PropDriveEnd` | the host to all | the final pose and velocity of a driven prop that rested or that a hand took; closes its generation |
+| `PropRelease` | the holder to all | the prop's transform, its inherited linear and angular velocity and its frozen and sleep at the edge, the hold it closes, and whether the holder streams the flight |
+| `PropDrivePose` (stream) | the owner to all, a client's through the host | the poses of the props its peer set moving -- a throw, a knock, a hook, a broom -- that moved since their last one, with the claim generation |
+| `PropDriveEnd` | the owner to all, a client's relayed | the final pose and velocity of a driven prop that rested or that a hand took; closes its generation |
 | `PropDropIntent`, `ReelEjectIntent` | a client to the host | a place, or an unavoidable birth, for the host to author |
 | `PropStickState` | the peer that sticks or frees it, to all | frozen or static, the commit pose and the hold the stick ended; or an unstick, with the pose and velocity |
 | `PropSnapPos` | the host to one joiner | a position correction for a save-authoritative prop moved in the join window, with a keyed prop's frozen and sleep |
@@ -415,7 +424,7 @@ holds that for twenty seconds against the save's delayed reconnect.
 
 | Limit | Evidence |
 |---|---|
-| What a prop coasting on a client knocks into moves on that client only: the knock stream runs on the host, and the coast places every other copy, which pushes nothing. The knocked prop rests apart until someone touches it | `[V]` `coop/props/knock_stream` is host-only; `coop/props/remote_prop` places a coasting copy (carry off) |
+| Two props different peers stream meet only as placed copies: each owner's copy simulates and the other's is placed, so a collision between them is felt on neither machine as single player feels it, and each owner's prop carries on as its own physics put it | `[V]` `coop/props/prop_drive_stream` places a copy another peer streams; `coop/props/knock_stream` takes no knock from another peer's prop |
 | A prop whose own grab prelude adds to the base one gets only the base one on a receiver: the sprinkler's also detaches its hose, so the hose stays tied to a sprinkler another peer carries away. The glowstick's replaces the base one with its own release, and a receiver runs the base one | `[V]` the sprinkler and glowstick Blueprints: `prop_sprinkler_C`'s prelude calls `prop_C::playerGrabbed_pre` and `hose->detachSprinkler`, `prop_glowstick_C`'s calls `releaseGlowstick` alone; `coop/props/remote_prop` runs the base prelude |
 | Another peer's hold can carry away the chair this peer sits in at the laptop, which single player never allows: the laptop freezes the seat only on the machine whose player sits | `[V]` the laptop Blueprint: `stabilizeSeat` sets the seat frozen, and the exit's `setPropProps` clears it; `coop/props/remote_prop` unfreezes a held copy at the hold's first pose |
 | A keyed prop a client creates outside the intent door (a place after a pickup, the whitelisted births, a container extract, a player's own spawn verb) never reaches the host. It is logged now: the drain names its exit, and `[dev] prop_birth_key_probe` tallies every exit by name | `[V]` `coop/props/prop_drop_intent` drops it at the drain; `coop/dev/prop_birth_key_probe` |

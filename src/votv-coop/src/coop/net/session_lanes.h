@@ -201,7 +201,7 @@ inline Lane LaneForKind(ReliableKind k) {
     case ReliableKind::HookDestroy:       return Lane::Normal;
     case ReliableKind::HookAnchorCommit:  return Lane::Normal;
     case ReliableKind::HookAnchored:      return Lane::Normal;
-    // PropDriveEnd is host-to-all and ordered against nothing: its stream is unreliable on its own
+    // PropDriveEnd is owner-to-all and ordered against nothing: its stream is unreliable on its own
     // datagram kind, and a receiver that never parked the prop treats the end as a closed
     // generation and no more. The default, by decision.
     case ReliableKind::PropDriveEnd:      return Lane::Normal;
@@ -260,14 +260,13 @@ constexpr bool IsClientRelayableReliableKind(ReliableKind k) {
     case ReliableKind::WindowStroke:      // presser-authored
     case ReliableKind::GrimeState:        // symmetric
     case ReliableKind::TrashPileState:    // symmetric
+    case ReliableKind::PropDriveEnd:      // the end of a stream its sender ran
     case ReliableKind::FireflySpawn:      // each peer spawns near its own camera and shares
     case ReliableKind::OwnerEntitySpawn:  // each peer owns its stalker; every peer must see it
     case ReliableKind::OwnerEntityPose:
     case ReliableKind::OwnerEntityDestroy:
     case ReliableKind::HookState:         // a hook belongs to the player who fired it
     case ReliableKind::HookDestroy:
-    // PropDriveEnd is not relayable: the host originates it, and a client's copy would be a forged
-    // end for a stream only the host runs.
     // HookAnchorCommit is deliberately NOT relayable: it is an intent addressed to the host alone,
     // and the host's own HookAnchored is what the other peers get. Relaying it would hand every
     // peer a record the arbiter has not validated yet, and two of them would build the hook.

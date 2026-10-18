@@ -1,5 +1,5 @@
-// coop/net/session_propdrive.cpp -- the host-originated driven-prop pose batch, send and receive,
-// for Session.
+// coop/net/session_propdrive.cpp -- the driven-prop pose batch, send and receive, for Session. Any peer
+// sends the props it set moving; the host keeps a client's per origin and relays it to the others.
 //
 // The session_trashcarry.cpp shape. The LOCAL side is a QUEUE, not a snapshot: the publisher sends
 // a prop's pose only when it moved since the last one it counted as sent, so the newest pose of
@@ -30,14 +30,26 @@ void Session::PublishPropDrivePose(const PropPoseSnapshot& pose) {
 }
 
 bool Session::TakeRemotePropDriveBatch(std::vector<PropPoseSnapshot>& out) {
-    return TakeHost(&HostStreams::propDrive, out);
+    if (!connected()) return false;
+    std::lock_guard<std::mutex> lk(remoteMutex_);
+    std::vector<PropPoseSnapshot> one;
+    bool any = false;
+    for (int slot = 0; slot < kMaxPeers; ++slot) {
+        one.clear();
+        if (!origin_[slot].propDrive.Take(one)) continue;
+        for (PropPoseSnapshot& e : one) {
+            e.flags = static_cast<uint8_t>((e.flags & 0x0F) | (slot << 4));
+            out.push_back(e);
+        }
+        any = true;
+    }
+    return any;
 }
 
 int Session::SerializeLocalPropDriveBatch(uint8_t* buf) {
     // One datagram = PacketHeader(20) + EntityPoseBatchHeader(4) + N*PropPoseSnapshot(64), capped at
     // kMaxPropDriveBatchEntries; the rest go out on the next send. The leading PacketHeader bytes
-    // are left for the caller to stamp per-peer. Only the HOST ever publishes, so on a client this
-    // returns 0.
+    // are left for the caller to stamp per-peer. Whichever peer set a prop moving publishes it.
     const int n = propDrivePoses_.Drain(buf + sizeof(PacketHeader) + sizeof(EntityPoseBatchHeader),
                                         kMaxPropDriveBatchEntries);
     if (n == 0) return 0;
@@ -48,14 +60,14 @@ int Session::SerializeLocalPropDriveBatch(uint8_t* buf) {
                             static_cast<size_t>(n) * sizeof(PropPoseSnapshot));
 }
 
-void Session::StoreRemotePropDriveBatch(const void* data, int len, uint32_t seq) {
-    // HOST->client driven-prop batch. The host originates it and never relays or receives it, so
-    // this lands only on clients; the ROLE gate and the FINITE check are the trust boundary, for
-    // the reasons session_trashcarry.cpp states.
-    if (role() == Role::Host) {
-        RefuseClientBatch(HostBatch::PropDrive, "propdrive", "PropDrivePose");
-        return;
-    }
+void Session::StoreRemotePropDriveBatch(int routeSlot, int peerSlot, const void* data, int len, uint32_t seq) {
+    // A peer's driven-prop batch: on the host a client's own, kept under its slot and relayed to the
+    // other clients; on a client the host's, or another client's the host relayed, under its origin.
+    // The origin is the connection's on the host and the relay's stamp on a client, never a field the
+    // sender writes; the FINITE check is the format's trust boundary, for the reasons session_trashcarry.cpp
+    // states.
+    if (routeSlot < 0 || routeSlot >= kMaxPeers) return;
+    if (role() == Role::Host && routeSlot != peerSlot) return;   // a client speaks for itself alone
     if (len < static_cast<int>(sizeof(PacketHeader) + sizeof(EntityPoseBatchHeader))) return;
     EntityPoseBatchHeader bh;
     std::memcpy(&bh, static_cast<const uint8_t*>(data) + sizeof(PacketHeader), sizeof(bh));
@@ -84,8 +96,11 @@ void Session::StoreRemotePropDriveBatch(const void* data, int len, uint32_t seq)
             return;
         }
     }
-    std::lock_guard<std::mutex> lk(remoteMutex_);
-    host_.propDrive.Merge(batch, count, seq);
+    {
+        std::lock_guard<std::mutex> lk(remoteMutex_);
+        origin_[routeSlot].propDrive.Merge(batch, count, seq);
+    }
+    if (role() == Role::Host) RelayUnreliableToOtherClients(peerSlot, data, len);
 }
 
 }  // namespace coop::net

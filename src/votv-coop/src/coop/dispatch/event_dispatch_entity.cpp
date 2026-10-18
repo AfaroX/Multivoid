@@ -439,8 +439,8 @@ bool HandleEntityEvent(net::Session& session,
         break;
     }
     case net::ReliableKind::PropDriveEnd: {
-        // Host to all: a driven prop's stream closed. Host-only, never relayed; validated here and
-        // applied by the stream's receiver on the game thread.
+        // A driven prop's stream closed, from the peer that ran it; the host relays a client's. Validated
+        // here and applied by the stream's receiver on the game thread.
         if (msg.payloadLen < sizeof(net::PropDriveEndPayload)) {
             UE_LOGW("event_feed: PropDriveEnd payload too short (%zu < %zu)",
                     static_cast<size_t>(msg.payloadLen), sizeof(net::PropDriveEndPayload));
@@ -459,12 +459,11 @@ bool HandleEntityEvent(net::Session& session,
                     p.x, p.y, p.z);
             break;
         }
-        if (p.eid == 0u || p.eid == coop::element::kInvalidId ||
-            !coop::element::Registry::IsAllowedHostAllocatedEid(p.eid)) {
-            UE_LOGW("event_feed: PropDriveEnd eid=0x%08x not a valid host-allocated id -- dropping", p.eid);
+        if (p.eid == 0u || p.eid == coop::element::kInvalidId) {
+            UE_LOGW("event_feed: PropDriveEnd eid=0x%08x not a valid id -- dropping", p.eid);
             break;
         }
-        ::coop::prop_drive_stream::OnEnd(p);   // the router is on the game thread; PropRelease's shape
+        ::coop::prop_drive_stream::OnEnd(p, msg.senderPeerSlot);   // the router is on the game thread
         break;
     }
     case net::ReliableKind::HookAnchorCommit: {

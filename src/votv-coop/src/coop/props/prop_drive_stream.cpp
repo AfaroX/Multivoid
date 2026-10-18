@@ -11,6 +11,8 @@
 #include "coop/player/local_streams.h"
 #include "coop/player/hand_item.h"
 #include "coop/props/remote_prop.h"           // ResolveLiveActorByEid, IsActorUnderAnyDrive
+#include "coop/props/prop_drive_host.h"       // Owns, Yield, NoteSeenGen: this peer's own streams
+#include "coop/player/players_registry.h"     // LocalPeerId: the coin's side
 #include "ue_wrap/actors/prop.h"
 #include "ue_wrap/core/game_thread.h"     // RegisterPreObserver: the use press
 #include "ue_wrap/core/hot_path_guard.h"
@@ -25,6 +27,7 @@
 #include <cstdint>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 namespace coop::prop_drive_stream {
@@ -81,6 +84,31 @@ std::vector<coop::net::PropPoseSnapshot> g_batch;
 
 // Newer-than on the wrapping byte the stream carries.
 bool GenAfter(uint8_t a, uint8_t b) { return static_cast<int8_t>(a - b) > 0; }
+
+int LocalSlot(const coop::net::Session& s) {
+    return s.role() == coop::net::Role::Host ? 0 : static_cast<int>(coop::players::Registry::Get().LocalPeerId());
+}
+
+// Two claims of one prop under the same generation crossed: the same coin on every peer, from the eid and
+// both slots. The winning slot.
+int CoinOwner(uint32_t eid, int slotA, int slotB) {
+    if (slotA > slotB) std::swap(slotA, slotB);
+    uint64_t h = 0xcbf29ce484222325ULL;
+    for (int i = 0; i < 4; ++i) { h ^= (eid >> (8 * i)) & 0xFF; h *= 0x100000001b3ULL; }
+    h ^= static_cast<uint8_t>(slotA); h *= 0x100000001b3ULL;
+    h ^= static_cast<uint8_t>(slotB); h *= 0x100000001b3ULL;
+    return ((h >> 17) & 1) ? slotB : slotA;
+}
+
+// A stream from `owner` under `gen` for a prop this peer may stream itself: true when that stream is the
+// prop's motion from now on -- this peer's own row, if any, yields to it.
+bool TheirsWins(uint32_t eid, uint8_t gen, int owner, int me) {
+    uint8_t mine = 0;
+    if (!coop::prop_drive_host::Owns(eid, &mine)) return true;
+    const bool theirs = GenAfter(gen, mine) || (gen == mine && CoinOwner(eid, me, owner) == owner);
+    if (theirs) coop::prop_drive_host::Yield(eid);
+    return theirs;
+}
 
 // A frozen or static prop keeps its physics off whatever the stream did: it is moved kinematically
 // and left so, the stuck wall-attachable rule the held-prop receiver applies.
@@ -167,11 +195,16 @@ size_t RecentEnds(AppliedEnd* out, size_t max) {
 void TickApplyAndDrive(coop::net::Session& s) {
     UE_ASSERT_GAME_THREAD("prop_drive_stream::TickApplyAndDrive");
     const uint64_t nowMs = AD::NowMs();
+    const int me = LocalSlot(s);
     g_batch.clear();
     if (s.TakeRemotePropDriveBatch(g_batch)) {
         for (const coop::net::PropPoseSnapshot& e : g_batch) {
             const uint32_t eid = e.elementId;
             if (eid == 0) continue;
+            const int owner = coop::net::PropDriveOwnerOf(e);
+            if (owner == me) continue;
+            coop::prop_drive_host::NoteSeenGen(eid, e.ctx);
+            if (!TheirsWins(eid, e.ctx, owner, me)) continue;   // this peer's newer claim moves it
             // The generation gate: a pose of a closed generation, or older than the live drive's,
             // is a datagram that outlived its stream.
             auto ended = g_endedGen.find(eid);
@@ -293,8 +326,14 @@ void TickApplyAndDrive(coop::net::Session& s) {
     }
 }
 
-void OnEnd(const coop::net::PropDriveEndPayload& p) {
+void OnEnd(const coop::net::PropDriveEndPayload& p, int senderSlot) {
     UE_ASSERT_GAME_THREAD("prop_drive_stream::OnEnd");
+    coop::prop_drive_host::NoteSeenGen(p.eid, p.gen);
+    // The end of a stream this peer's own newer claim already took over closes nothing here.
+    uint8_t mine = 0;
+    if (coop::prop_drive_host::Owns(p.eid, &mine) && !GenAfter(p.gen, mine)) return;
+    if (coop::prop_drive_host::Owns(p.eid)) coop::prop_drive_host::Yield(p.eid);
+    (void)senderSlot;
     auto it = g_drives.find(p.eid);
     if (it == g_drives.end()) {
         // Never parked here. The generation still closes, so a pose of it in flight cannot park
