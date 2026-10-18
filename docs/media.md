@@ -19,7 +19,11 @@ file put there mid-session shows in the game's own pickers (`ue_wrap/world/custo
 
 ### The pool
 
-F1 > Cosmetics > Shared media lists this player's own files by kind and the pool. A share hashes the file
+F1 > Cosmetics > Shared media lists this player's own files by kind, in or out of a session, and the
+pool. Add files opens the system's file dialog on its own thread; each picked file is copied into the
+asset folder -- a picture into the kind selected, a track into `radio`, a video into `tv`, a taken name
+given a numbered one -- and, in a session, shared. A file a player plays on a TV or the radio, or hangs
+in a frame, is shared by itself, so nobody presses Share for it and nobody confirms a download. A share hashes the file
 off the game thread and offers it; the host keeps the pool -- kind, name, size and hash per file -- and
 sends it to every peer on each change and to a joiner at its world-ready. A client's share uploads the
 file to the host first, and the host serves every copy from its own disk. A peer that lacks a pooled
@@ -51,8 +55,10 @@ position on every change, every two seconds while it plays, and to a joiner at i
 device the host's world was already playing is found from its player's url. A local file's link is
 sent relative to the asset folder (`@assets:`) and rebuilt from the receiver's own, since the absolute
 path names each machine's user. A client opens the same link, follows the play state, and seeks when it
-drifts past two seconds; a pause or a resume its own player makes is sent to the host as an intent
-(`coop/media/media_playback`).
+drifts past two seconds. A pause, a resume or a scrub its own player makes is sent to the host as an
+intent, and a scrub on the host's goes out at once: a position further from where play would have put it
+than a second and a half is a scrub. A link to a file the pool has not brought yet waits for it, on a
+client and on the host for a client's pick, and opens once it lands (`coop/media/media_playback`).
 
 ## Who owns what
 
@@ -69,7 +75,7 @@ drifts past two seconds; a pause or a resume its own player makes is sent to the
 |---|---|---|
 | `MediaPool` | host to all; client to host; host to one client | the pool; a share, a removal or a request for a file |
 | `MediaChunk` (bulk, Media lane) | either direction, to the asker | one piece of a pooled file |
-| `MediaPlay` | host to all; client to host | a device's link, play state and position; a client's open, play or pause |
+| `MediaPlay` | host to all; client to host | a device's link, play state and position; a client's open, play, pause or scrub |
 
 ## Known limits
 

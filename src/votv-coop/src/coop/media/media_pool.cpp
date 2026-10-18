@@ -12,6 +12,10 @@
 #include "ue_wrap/world/custom_assets.h"
 
 #include <windows.h>
+#include <commdlg.h>
+#include <objbase.h>
+#pragma comment(lib, "comdlg32.lib")  // GetOpenFileNameW: the import dialog
+#pragma comment(lib, "ole32.lib")     // CoInitializeEx, on the dialog's thread
 
 #include <algorithm>
 #include <atomic>
@@ -106,6 +110,8 @@ struct Done { uint64_t hash; bool ok; std::wstring why; };
 
 struct HashJob { Kind kind; std::wstring name; uint64_t size, hash; bool ok; };
 struct Req { int op; Kind kind; std::wstring name; uint64_t hash; };
+struct Imported { Kind kind; std::wstring name; std::wstring why; };
+constexpr int kOpReqShare = 0, kOpReqUnshare = 1, kOpReqRescan = 2, kOpReqImport = 3, kOpReqShareAll = 4;
 
 std::atomic<coop::net::Session*> g_session{nullptr};
 coop::blob_chunks::Assembler g_asm;
@@ -118,7 +124,8 @@ std::map<std::pair<int, std::wstring>, uint64_t> g_ownHash; // this peer's own f
 std::vector<Out> g_out;
 std::map<uint64_t, uint64_t> g_wantedAt;                     // hash -> when this peer last asked
 std::set<uint64_t> g_failed, g_conflict;
-std::atomic<uint64_t> g_panelSeen{0};
+std::atomic<uint64_t> g_panelSeen{0}, g_lastTick{0};
+std::atomic<bool> g_offlinePosted{false};
 uint64_t g_nextRelist = 0, g_reimportAt = 0, g_lastReimport = 0, g_nextSweep = 0;
 std::wstring g_status;
 
@@ -138,6 +145,12 @@ std::atomic<int> g_hashRunning{0};
 
 std::mutex g_reqMu;
 std::vector<Req> g_reqs;
+
+std::vector<std::pair<Kind, std::wstring>> g_hashQueue;     // own files waiting for a hashing thread
+std::set<std::pair<int, std::wstring>> g_hashing;           // queued or running: never twice
+std::atomic<bool> g_importOpen{false};
+std::mutex g_importMu;
+std::vector<Imported> g_imported;
 
 std::mutex g_snapMu;
 Snapshot g_snap;
@@ -393,16 +406,126 @@ void RefreshImages() {
     UE_LOGI("media_pool: re-imported the asset folder; %d picture frame(s) and poster(s) looked up their image again", n);
 }
 
+bool Pooled(Kind k, const std::wstring& name) {
+    for (const Entry& e : g_pool) if (e.kind == k && e.name == name) return true;
+    return false;
+}
+
+void QueueHash(Kind k, const std::wstring& name) {
+    if (!g_hashing.insert({static_cast<int>(k), name}).second) return;
+    g_hashQueue.emplace_back(k, name);
+    Status(L"Reading " + name + L" ...");
+}
+
+void StartQueuedHashes() {
+    while (!g_hashQueue.empty() && g_hashRunning.load() < 2) {
+        const auto [k, name] = g_hashQueue.front();
+        g_hashQueue.erase(g_hashQueue.begin());
+        StartHash(k, name);
+    }
+}
+
+Kind KindForImport(const std::wstring& name, Kind imageKind) {
+    if (ExtAllowed(Kind::Tv, name)) return Kind::Tv;
+    if (ExtAllowed(Kind::Radio, name)) return Kind::Radio;
+    if (ExtAllowed(Kind::PicH, name)) return (imageKind == Kind::Radio || imageKind == Kind::Tv) ? Kind::PicH : imageKind;
+    return Kind::Count;
+}
+
+// The system file dialog on its own thread; each picked file is copied into the asset folder there too,
+// since a video's copy would stall a frame.
+void StartImport(Kind imageKind) {
+    if (g_folder.empty()) { Status(L"The game's media folder is not known yet"); return; }
+    if (g_importOpen.exchange(true)) return;
+    HWND owner = ::GetForegroundWindow();
+    DWORD pid = 0;
+    if (owner) ::GetWindowThreadProcessId(owner, &pid);
+    if (pid != ::GetCurrentProcessId()) owner = nullptr;
+    const std::wstring folder = g_folder;
+    std::thread([imageKind, folder, owner]() {
+        const HRESULT co = ::CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+        std::vector<wchar_t> buf(64 * 1024, L'\0');
+        OPENFILENAMEW ofn{};
+        ofn.lStructSize = sizeof(ofn);
+        ofn.hwndOwner = owner;
+        ofn.lpstrFilter = L"Pictures, tracks and videos\0*.png;*.jpg;*.jpeg;*.bmp;*.tga;*.mp3;*.wav;*.ogg;*.flac;"
+                          L"*.mp4;*.webm;*.avi;*.mkv;*.mov;*.wmv;*.m4v\0All files\0*.*\0";
+        ofn.lpstrFile = buf.data();
+        ofn.nMaxFile = static_cast<DWORD>(buf.size());
+        ofn.lpstrTitle = L"Add files to the shared media";
+        ofn.Flags = OFN_ALLOWMULTISELECT | OFN_EXPLORER | OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
+        std::vector<Imported> out;
+        if (::GetOpenFileNameW(&ofn)) {
+            // One file: its full path. Several: the directory, then each name, each NUL-ended.
+            std::vector<std::wstring> parts;
+            for (const wchar_t* p = buf.data(); *p; p += wcslen(p) + 1) parts.emplace_back(p);
+            std::vector<fs::path> picked;
+            if (parts.size() == 1) picked.emplace_back(parts[0]);
+            else for (size_t i = 1; i < parts.size(); ++i) picked.push_back(fs::path(parts[0]) / parts[i]);
+            for (const fs::path& src : picked) {
+                std::wstring name = src.filename().wstring();
+                const Kind k = KindForImport(name, imageKind);
+                if (k == Kind::Count || !NameOk(k, name)) { out.push_back(Imported{Kind::Count, name, L"not a picture, track or video the game reads"}); continue; }
+                std::error_code ec;
+                const uint64_t size = static_cast<uint64_t>(fs::file_size(src, ec));
+                if (ec || size == 0 || size > CapOf(k)) { out.push_back(Imported{Kind::Count, name, L"empty or over the size limit"}); continue; }
+                const fs::path dir = fs::path(folder) / KindFolder(k);
+                fs::create_directories(dir, ec);
+                fs::path dst = dir / name;
+                // A file of that name already there: the same size is the same file; another gets a new name.
+                for (int n = 2; fs::exists(dst, ec) && fs::file_size(dst, ec) != size && n < 100; ++n) {
+                    name = src.stem().wstring() + L" (" + std::to_wstring(n) + L")" + src.extension().wstring();
+                    dst = dir / name;
+                }
+                if (!fs::exists(dst, ec) && !::CopyFileW(src.c_str(), dst.c_str(), TRUE)) {
+                    out.push_back(Imported{Kind::Count, name, L"could not be copied into the media folder"});
+                    continue;
+                }
+                out.push_back(Imported{k, name, L""});
+            }
+        }
+        if (SUCCEEDED(co)) ::CoUninitialize();
+        {
+            std::lock_guard<std::mutex> lk(g_importMu);
+            for (auto& i : out) g_imported.push_back(std::move(i));
+        }
+        g_importOpen.store(false);
+    }).detach();
+}
+
+void TakeImported(coop::net::Session* s) {
+    std::vector<Imported> got;
+    { std::lock_guard<std::mutex> lk(g_importMu); got.swap(g_imported); }
+    if (got.empty()) return;
+    int added = 0;
+    for (const Imported& i : got) {
+        if (i.kind == Kind::Count) { Status(i.name + L": " + i.why); continue; }
+        ++added;
+        if (s) QueueHash(i.kind, i.name);
+    }
+    g_nextRelist = 0;
+    g_reimportAt = NowMs() + kReimportDelayMs;   // this player's own game shows them too
+    if (added && !s) Status(L"Added to your media folder; host or join a session to share them");
+}
+
 void RunReqs(coop::net::Session* s) {
     std::vector<Req> reqs;
     { std::lock_guard<std::mutex> lk(g_reqMu); reqs.swap(g_reqs); }
     for (const Req& r : reqs) {
-        if (r.op == 0) {   // share
+        if (r.op == kOpReqShare) {
+            if (!s) { Status(L"Host or join a session to share"); continue; }
             if (!NameOk(r.kind, r.name)) { Status(L"That file cannot be shared"); continue; }
-            if (g_hashRunning.load() >= 2) { Status(L"Still reading the last files -- try again in a moment"); continue; }
-            StartHash(r.kind, r.name);
-            Status(L"Reading " + r.name + L" ...");
-        } else if (r.op == 1) {   // unshare
+            QueueHash(r.kind, r.name);
+        } else if (r.op == kOpReqShareAll) {
+            if (!s) { Status(L"Host or join a session to share"); continue; }
+            int n = 0;
+            for (const auto& [k, size] : g_local)
+                if (k.first == static_cast<int>(r.kind) && !Pooled(r.kind, k.second)) { QueueHash(r.kind, k.second); ++n; }
+            Status(n ? L"Sharing every file of that kind" : L"Every file of that kind is shared");
+        } else if (r.op == kOpReqImport) {
+            StartImport(r.kind);
+        } else if (r.op == kOpReqUnshare) {
+            if (!s) continue;
             if (s->role() == coop::net::Role::Host) {
                 g_pool.erase(std::remove_if(g_pool.begin(), g_pool.end(), [&](const Entry& e) { return e.hash == r.hash; }),
                              g_pool.end());
@@ -413,7 +536,7 @@ void RunReqs(coop::net::Session* s) {
                 PutU64(b, r.hash);
                 SendTo(s, 0, b);
             }
-        } else {
+        } else if (r.op == kOpReqRescan) {
             g_nextRelist = 0;
         }
     }
@@ -488,6 +611,7 @@ void TakeDone(coop::net::Session* s) {
 
 void BuildSnapshot(coop::net::Session* s) {
     Snapshot snap;
+    snap.importing = g_importOpen.load();
     snap.session = s != nullptr;
     snap.host = s && s->role() == coop::net::Role::Host;
     snap.folder = g_folder;
@@ -596,29 +720,41 @@ void Install(coop::net::Session* session) {
 void Tick() {
     auto* s = Live();
     const uint64_t now = NowMs();
-    if (!s) {
-        std::lock_guard<std::mutex> lk(g_snapMu);
-        g_snap.session = false;
-        return;
-    }
+    g_lastTick.store(now, std::memory_order_relaxed);
+    const bool panel = now - g_panelSeen.load(std::memory_order_relaxed) < 2000;
     if (g_folder.empty()) {
+        // Outside a session too: a player sees and adds its own files whenever a world is up.
+        if (!panel && !s) { BuildSnapshot(nullptr); return; }
         g_folder = CA::AssetFolder();
-        if (g_folder.empty()) return;
+        if (g_folder.empty()) { BuildSnapshot(s); return; }
         UE_LOGI("media_pool: the asset folder is '%ls'", g_folder.c_str());
         g_nextRelist = 0;
+    }
+    RunReqs(s);
+    TakeImported(s);
+    StartQueuedHashes();
+    if (!s) {
+        std::vector<HashJob> jobs;
+        { std::lock_guard<std::mutex> lk(g_hashMu); jobs.swap(g_hashDone); }
+        for (const HashJob& j : jobs) g_hashing.erase({static_cast<int>(j.kind), j.name});
+        if (panel && now >= g_nextRelist) { g_nextRelist = now + kRelistMs; Relist(); }
+        if (g_reimportAt && now >= g_reimportAt) { g_reimportAt = 0; g_lastReimport = now; if (CA::Reimport()) RefreshImages(); }
+        BuildSnapshot(nullptr);
+        return;
     }
     if (now >= g_nextSweep) {
         g_nextSweep = now + 1000;
         g_asm.Sweep(std::chrono::steady_clock::now(), std::chrono::seconds(20));
     }
-    RunReqs(s);
     {
         std::vector<HashJob> jobs;
         { std::lock_guard<std::mutex> lk(g_hashMu); jobs.swap(g_hashDone); }
-        for (const HashJob& j : jobs) AddOwn(s, j);
+        for (const HashJob& j : jobs) {
+            g_hashing.erase({static_cast<int>(j.kind), j.name});
+            if (s) AddOwn(s, j);
+        }
     }
     TakeDone(s);
-    const bool panel = now - g_panelSeen.load(std::memory_order_relaxed) < 2000;
     if (now >= g_nextRelist && (panel || g_nextRelist == 0)) {
         g_nextRelist = now + kRelistMs;
         Relist();
@@ -760,8 +896,8 @@ void OnDisconnect() {
     g_conflict.clear();
     g_rxPages.clear();
     g_rxGen = 0;
-    g_folder.clear();
     g_reimportAt = 0;
+    g_hashQueue.clear();
     g_status.clear();
     std::lock_guard<std::mutex> lk(g_snapMu);
     g_snap = Snapshot{};
@@ -772,21 +908,78 @@ Snapshot GetSnapshot() {
     return g_snap;
 }
 
-void NotePanelOpen() { g_panelSeen.store(NowMs(), std::memory_order_relaxed); }
+void NotePanelOpen() {
+    const uint64_t now = NowMs();
+    g_panelSeen.store(now, std::memory_order_relaxed);
+    // Outside a session the pump does not tick the pool, so the open panel asks the game thread itself,
+    // once a second, for the listing and the imports.
+    if (now - g_lastTick.load(std::memory_order_relaxed) > 1000 && !g_offlinePosted.exchange(true))
+        GT::Post([]() { g_offlinePosted.store(false); Tick(); });
+}
 
 void RequestShare(Kind kind, const std::wstring& name) {
     std::lock_guard<std::mutex> lk(g_reqMu);
-    g_reqs.push_back(Req{0, kind, name, 0});
+    g_reqs.push_back(Req{kOpReqShare, kind, name, 0});
+}
+
+void RequestShareAll(Kind kind) {
+    std::lock_guard<std::mutex> lk(g_reqMu);
+    g_reqs.push_back(Req{kOpReqShareAll, kind, std::wstring(), 0});
+}
+
+void RequestImport(Kind imageKind) {
+    std::lock_guard<std::mutex> lk(g_reqMu);
+    g_reqs.push_back(Req{kOpReqImport, imageKind, std::wstring(), 0});
+}
+
+void AutoShare(Kind kind, const std::wstring& nameOrStem) {
+    if (!Live() || g_folder.empty() || nameOrStem.empty() || kind == Kind::Count) return;
+    if (g_local.empty()) Relist();
+    auto lower = [](std::wstring w) { for (auto& c : w) c = static_cast<wchar_t>(std::towlower(c)); return w; };
+    const std::wstring want = lower(nameOrStem);
+    for (const auto& [k, size] : g_local) {
+        if (k.first != static_cast<int>(kind)) continue;
+        const std::wstring n = lower(k.second);
+        const size_t dot = n.find_last_of(L'.');
+        if (n != want && (dot == std::wstring::npos || n.substr(0, dot) != want)) continue;
+        if (Pooled(kind, k.second)) return;
+        UE_LOGI("media_pool: '%ls' is played or hung here and is not pooled -- sharing it", k.second.c_str());
+        QueueHash(kind, k.second);
+        return;
+    }
+}
+
+bool HaveFile(Kind kind, const std::wstring& name) {
+    if (g_folder.empty()) return false;
+    std::error_code ec;
+    return fs::is_regular_file(PathOf(kind, name), ec);
+}
+
+bool FromAssetRelative(const std::wstring& rel, Kind& kind, std::wstring& name) {
+    std::wstring r = rel;
+    for (auto& c : r) if (c == L'/') c = L'\\';
+    while (!r.empty() && r[0] == L'\\') r.erase(0, 1);
+    const size_t slash = r.find_last_of(L'\\');
+    if (slash == std::wstring::npos) return false;
+    std::wstring dir = r.substr(0, slash);
+    for (auto& c : dir) c = static_cast<wchar_t>(std::towlower(c));
+    for (int k = 0; k < static_cast<int>(Kind::Count); ++k)
+        if (dir == KindFolder(static_cast<Kind>(k))) {
+            kind = static_cast<Kind>(k);
+            name = r.substr(slash + 1);
+            return !name.empty();
+        }
+    return false;
 }
 
 void RequestUnshare(uint64_t hash) {
     std::lock_guard<std::mutex> lk(g_reqMu);
-    g_reqs.push_back(Req{1, Kind::Count, std::wstring(), hash});
+    g_reqs.push_back(Req{kOpReqUnshare, Kind::Count, std::wstring(), hash});
 }
 
 void RequestRescan() {
     std::lock_guard<std::mutex> lk(g_reqMu);
-    g_reqs.push_back(Req{2, Kind::Count, std::wstring(), 0});
+    g_reqs.push_back(Req{kOpReqRescan, Kind::Count, std::wstring(), 0});
 }
 
 }  // namespace coop::media_pool

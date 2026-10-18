@@ -59,6 +59,7 @@ struct Snapshot {
     std::vector<LocalFile> local;
     std::vector<PoolRow> pool;
     std::wstring status;   // the last thing worth telling the player
+    bool importing = false;   // the file dialog is open
 };
 Snapshot GetSnapshot();
 
@@ -67,7 +68,25 @@ void NotePanelOpen();
 
 // Put one of this player's files in the pool, take one out (the sharer or the host), or re-list now.
 void RequestShare(Kind kind, const std::wstring& name);
+void RequestShareAll(Kind kind);
 void RequestUnshare(uint64_t hash);
 void RequestRescan();
+
+// Pick files anywhere on this PC with the system's file dialog; each is copied into the asset folder --
+// an image into `imageKind`'s folder, a track into radio's, a video into tv's -- and shared. The dialog
+// runs on its own thread, so the game keeps drawing behind it.
+void RequestImport(Kind imageKind);
+
+// ---- the lanes that show media (game thread) ----
+
+// Share this player's own file of `kind` named `nameOrStem` (a file name, or one without its extension)
+// unless the pool has it: a file a player plays or hangs is everyone's without anyone pressing Share.
+void AutoShare(Kind kind, const std::wstring& nameOrStem);
+
+// Whether this peer's asset folder holds `name` of `kind`.
+bool HaveFile(Kind kind, const std::wstring& name);
+
+// A path relative to the asset folder ("\tv\clip.mp4") as a kind and a file name. False for any other.
+bool FromAssetRelative(const std::wstring& rel, Kind& kind, std::wstring& name);
 
 }  // namespace coop::media_pool

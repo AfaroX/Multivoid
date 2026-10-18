@@ -2,6 +2,7 @@
 
 #include "coop/media/media_playback.h"
 
+#include "coop/media/media_pool.h"     // AutoShare, HaveFile: a played file is everyone's
 #include "coop/net/blob_chunks.h"
 #include "coop/net/session.h"
 #include "coop/props/prop_key_index.h"     // Find, DebugCollect: devices by their key
@@ -36,12 +37,14 @@ UE_FACT_FN(kRowTvFin, "media_playback", L"prop_tv2_C", L"fin", Declared);
 UE_FACT_FN(kRowRadioFin, "media_playback", L"prop_radio_internet_C", L"fin", Declared);
 constexpr int kTagOpen = 0x4D504F50, kTagFin = 0x4D504649;  // 'MPOP' 'MPFI'
 
-constexpr uint8_t kOpState = 0, kOpOpen = 1, kOpPlay = 2;
+constexpr uint8_t kOpState = 0, kOpOpen = 1, kOpPlay = 2, kOpSeek = 3;
 constexpr uint64_t kPollMs = 500, kBeatMs = 2000, kScanMs = 5000;
 constexpr int64_t  kDriftMs = 2000;
 constexpr uint64_t kSettleMs = 1500;     // after an open, before the player's state means anything
 constexpr uint64_t kUserHoldMs = 2500;   // after a client's own press, before the host's state is enforced
 constexpr size_t   kMaxDevices = 64;
+constexpr int64_t  kJumpMs = 1500;      // a position this far from where play would have put it was moved
+constexpr uint64_t kPendingMs = 10 * 60 * 1000;   // how long a play waits for its file to arrive
 const std::wstring kAssetsTag = L"@assets:";
 
 uint64_t NowMs() { return static_cast<uint64_t>(::GetTickCount64()); }
@@ -60,7 +63,12 @@ struct HostDev {
     bool dirty = true;
     uint64_t sentMs = 0;
     std::wstring rawUrl;    // the player's own url, to catch a change openLink did not make
+    int64_t lastT = 0;
+    uint64_t lastAt = 0;
 };
+
+// HOST: a play a client asked for whose file has not reached the host yet.
+struct PendingOpen { std::wstring key, name, link; bool isUrl = false, pause = false; uint64_t atMs = 0; };
 
 // CLIENT: what the host says, and what this peer last did about it.
 struct ClientDev {
@@ -69,6 +77,8 @@ struct ClientDev {
     uint32_t appliedSeq = 0;
     uint64_t openedMs = 0, commandMs = 0, userMs = 0;
     bool lastPlaying = false, haveLast = false;
+    int64_t lastT = 0;
+    uint64_t lastAt = 0;
 };
 
 std::atomic<coop::net::Session*> g_session{nullptr};
@@ -77,6 +87,7 @@ uint32_t g_seq = 1, g_openSeq = 0;
 bool g_watched[4] = {}, g_saidLive[4] = {};
 std::map<std::wstring, HostDev> g_host;
 std::map<std::wstring, ClientDev> g_client;
+std::vector<PendingOpen> g_pending;
 uint64_t g_nextPoll = 0, g_nextScan = 0, g_nextSweep = 0;
 std::wstring g_folderNorm;   // the asset folder, normalised, for the wire form
 
@@ -111,6 +122,25 @@ std::wstring FromWire(const std::wstring& link) {
     if (link.compare(0, kAssetsTag.size(), kAssetsTag) != 0) return link;
     const std::wstring f = ue_wrap::custom_assets::AssetFolder();
     return f + link.substr(kAssetsTag.size());
+}
+
+// A wire link that names a file in the asset folder, as the pool's kind and name.
+bool AssetFile(const std::wstring& wireLink, coop::media_pool::Kind& kind, std::wstring& name) {
+    if (wireLink.compare(0, kAssetsTag.size(), kAssetsTag) != 0) return false;
+    return coop::media_pool::FromAssetRelative(wireLink.substr(kAssetsTag.size()), kind, name);
+}
+
+// Whether this peer can open the link now: a URL always, an asset file once it is here.
+bool Openable(const std::wstring& wireLink) {
+    coop::media_pool::Kind kind;
+    std::wstring name;
+    return !AssetFile(wireLink, kind, name) || coop::media_pool::HaveFile(kind, name);
+}
+
+void ShareIfAsset(const std::wstring& wireLink) {
+    coop::media_pool::Kind kind;
+    std::wstring name;
+    if (AssetFile(wireLink, kind, name)) coop::media_pool::AutoShare(kind, name);
 }
 
 std::wstring KeyOf(void* actor) {
@@ -197,8 +227,25 @@ void Track(void* actor, const std::wstring& name, const std::wstring& link, bool
     d.st.timeMs = 0;
     d.dirty = true;
     d.rawUrl.clear();
+    d.lastT = 0;
+    d.lastAt = NowMs();
+    ShareIfAsset(d.st.link);
     UE_LOGI("media_playback: HOST %ls '%ls' plays '%ls'", MD::KindOf(actor) == MD::Kind::Tv ? L"TV" : L"radio",
             key.c_str(), name.c_str());
+}
+
+void HostPending(uint64_t now) {
+    for (auto it = g_pending.begin(); it != g_pending.end();) {
+        if (now - it->atMs > kPendingMs) { it = g_pending.erase(it); continue; }
+        void* actor = coop::prop_key_index::Find(it->key);
+        if (!actor || !Openable(it->link)) { ++it; continue; }
+        const std::wstring local = FromWire(it->link);
+        if (MD::OpenLink(actor, it->name, local, it->isUrl, it->pause)) {
+            Track(actor, it->name, local, it->isUrl, it->pause);
+            UE_LOGI("media_playback: HOST played '%ls' on '%ls' now that the file is here", it->name.c_str(), it->key.c_str());
+        }
+        it = g_pending.erase(it);
+    }
 }
 
 void HostPoll(coop::net::Session* s, uint64_t now) {
@@ -228,6 +275,13 @@ void HostPoll(coop::net::Session* s, uint64_t now) {
             d.rawUrl = url;
         }
         if (playing != d.st.playing) { d.st.playing = playing; d.dirty = true; }
+        // A scrub: the position moved further than play would have moved it.
+        if (d.lastAt) {
+            const int64_t expect = d.lastT + (playing ? static_cast<int64_t>(now - d.lastAt) : 0);
+            if ((t > expect ? t - expect : expect - t) > kJumpMs) d.dirty = true;
+        }
+        d.lastT = t;
+        d.lastAt = now;
         d.st.timeMs = t;
         if (d.dirty || (playing && now - d.sentMs >= kBeatMs)) {
             d.dirty = false;
@@ -264,11 +318,13 @@ void ClientApply(uint64_t now) {
         void* actor = coop::prop_key_index::Find(key);
         if (!actor || MD::KindOf(actor) == MD::Kind::None) continue;
         if (d.appliedSeq != d.want.openSeq) {
+            if (!Openable(d.want.link)) continue;   // the pool is still bringing the file
             if (MD::OpenLink(actor, d.want.name, FromWire(d.want.link), d.want.isUrl, !d.want.playing)) {
                 d.appliedSeq = d.want.openSeq;
                 d.openedMs = now;
                 d.commandMs = now;
                 d.haveLast = false;
+                d.lastAt = 0;   // a new link's position is not the old one's: no scrub to see yet
             }
             continue;
         }
@@ -292,13 +348,36 @@ void ClientApply(uint64_t now) {
                 Send(s, 0, b);
             }
         }
+        // A scrub this peer did not command is its player's own: the host moves its copy there.
+        if (d.lastAt && now - d.commandMs > 1000) {
+            const int64_t moved = d.lastT + (playing ? static_cast<int64_t>(now - d.lastAt) : 0);
+            if ((t > moved ? t - moved : moved - t) > kJumpMs) {
+                d.userMs = now;
+                d.want.timeMs = t;
+                d.recvMs = now;
+                if (auto* s = Live()) {
+                    std::vector<uint8_t> b;
+                    PutU8(b, kOpSeek);
+                    PutStr(b, key);
+                    PutU64(b, static_cast<uint64_t>(t < 0 ? 0 : t));
+                    Send(s, 0, b);
+                }
+            }
+        }
+        d.lastT = t;
+        d.lastAt = now;
         d.lastPlaying = playing;
         d.haveLast = true;
         if (now - d.userMs < kUserHoldMs) continue;
         if (d.want.playing && !playing) { MD::Play(player); d.commandMs = now; continue; }
         if (!d.want.playing && playing) { MD::Pause(player); d.commandMs = now; continue; }
         const int64_t expect = d.want.timeMs + (d.want.playing ? static_cast<int64_t>(now - d.recvMs) : 0);
-        if ((t > expect ? t - expect : expect - t) > kDriftMs) { MD::Seek(player, expect); d.commandMs = now; }
+        if ((t > expect ? t - expect : expect - t) > kDriftMs) {
+            MD::Seek(player, expect);
+            d.commandMs = now;
+            d.lastT = expect;
+            d.lastAt = now;
+        }
     }
 }
 
@@ -316,11 +395,13 @@ sg::Verdict OnOpenPre(const sg::Call& c) {
     }
     const std::wstring key = KeyOf(c.object);
     if (key.empty()) return sg::Verdict::Run;   // a device the host cannot name: this peer's alone
+    const std::wstring wire = ToWire(link, isUrl);
+    ShareIfAsset(wire);   // the host and the others fetch it, and play it once it is there
     std::vector<uint8_t> b;
     PutU8(b, kOpOpen);
     PutStr(b, key);
     PutStr(b, name);
-    PutStr(b, ToWire(link, isUrl));
+    PutStr(b, wire);
     PutU8(b, isUrl ? 1 : 0);
     PutU8(b, pause ? 1 : 0);
     Send(s, 0, b);
@@ -375,6 +456,7 @@ void Tick() {
     g_nextPoll = now + kPollMs;
     if (s->role() == coop::net::Role::Host) {
         if (now >= g_nextScan) { g_nextScan = now + kScanMs; HostScan(); }
+        HostPending(now);
         HostPoll(s, now);
     } else {
         ClientApply(now);
@@ -418,11 +500,33 @@ void OnChunk(const coop::net::BlobChunkPayload& p, uint8_t senderSlot) {
         const std::wstring name = r.Str(), link = r.Str();
         const bool isUrl = r.U8() != 0, pause = r.U8() != 0;
         if (!r.ok) return;
+        if (!Openable(link)) {
+            g_pending.erase(std::remove_if(g_pending.begin(), g_pending.end(),
+                                           [&](const PendingOpen& p) { return p.key == key; }),
+                            g_pending.end());
+            g_pending.push_back(PendingOpen{key, name, link, isUrl, pause, now});
+            UE_LOGI("media_playback: HOST holds slot %u's '%ls' on '%ls' until the file arrives", senderSlot,
+                    name.c_str(), key.c_str());
+            return;
+        }
         const std::wstring local = FromWire(link);
         // Ours to run: the watch tracks it (fromOurCode), so the open is tracked here instead.
         if (MD::OpenLink(actor, name, local, isUrl, pause)) {
             Track(actor, name, local, isUrl, pause);
             UE_LOGI("media_playback: HOST played slot %u's '%ls' on '%ls'", senderSlot, name.c_str(), key.c_str());
+        }
+        return;
+    }
+    if (op == kOpSeek) {
+        const int64_t t = static_cast<int64_t>(r.U64());
+        if (!r.ok) return;
+        if (void* player = MD::PlayerOf(actor)) MD::Seek(player, t);
+        auto it = g_host.find(key);
+        if (it != g_host.end()) {
+            it->second.st.timeMs = t;
+            it->second.lastT = t;
+            it->second.lastAt = now;
+            it->second.dirty = true;
         }
         return;
     }
@@ -456,6 +560,7 @@ void OnDisconnect() {
     g_asm.Clear();
     g_host.clear();
     g_client.clear();
+    g_pending.clear();
     g_folderNorm.clear();
     g_nextPoll = g_nextScan = 0;
 }

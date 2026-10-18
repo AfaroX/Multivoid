@@ -38,17 +38,26 @@ void Render() {
                                      "players. A shared file is copied into every player's game folder under the "
                                      "same name, so picture frames, posters, the radio and the TVs show it for "
                                      "everyone."));
-    if (!s.session) {
-        ImGui::TextDisabled("%s", l10n::T("Host or join a session to share media."));
-        return;
-    }
     if (s.folder.empty()) {
-        ImGui::TextDisabled("%s", l10n::T("Waiting for the game's media folder..."));
+        ImGui::TextDisabled("%s", l10n::T("Waiting for the game's media folder (it is known once a world is loaded)..."));
         return;
     }
     ImGui::TextDisabled("%s", U8(s.folder).c_str());
+    if (s.importing) {
+        ImGui::BeginDisabled();
+        ImGui::Button(l10n::Label(l10n::T("Choosing files..."), "media_add"));
+        ImGui::EndDisabled();
+    } else if (ImGui::Button(l10n::Label(l10n::T("Add files..."), "media_add"))) {
+        MP::RequestImport(static_cast<MP::Kind>(g_kind));
+    }
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("%s", l10n::T("Pick pictures, tracks or videos anywhere on this PC. They are copied into your "
+                                        "media folder and, in a session, shared. A picture goes to the kind selected "
+                                        "below."));
+    ImGui::SameLine();
     if (ImGui::Button(l10n::Label(l10n::T("Refresh"), "media_refresh"))) MP::RequestRescan();
     if (!s.status.empty()) { ImGui::SameLine(); ImGui::TextDisabled("%s", U8(s.status).c_str()); }
+    if (!s.session) ImGui::TextDisabled("%s", l10n::T("Host or join a session to share your files."));
     ImGui::Separator();
 
     // ---- this player's own files ----
@@ -59,6 +68,10 @@ void Render() {
         if (ImGui::RadioButton(l10n::T(MP::KindLabel(static_cast<MP::Kind>(k))), g_kind == k)) g_kind = k;
         ImGui::PopID();
     }
+    if (s.session) {
+        if (ImGui::SmallButton(l10n::Label(l10n::T("Share all of this kind"), "share_all")))
+            MP::RequestShareAll(static_cast<MP::Kind>(g_kind));
+    }
     if (ImGui::BeginChild("media_local", ImVec2(0, ImGui::GetTextLineHeightWithSpacing() * 8), true)) {
         int shown = 0;
         for (const MP::LocalFile& f : s.local) {
@@ -67,6 +80,8 @@ void Render() {
             ImGui::PushID(U8(f.name).c_str());
             if (f.pooled) {
                 ImGui::TextDisabled("%s", l10n::T("shared"));
+            } else if (!s.session) {
+                ImGui::TextDisabled("%s", l10n::T("yours"));
             } else if (ImGui::SmallButton(l10n::Label(l10n::T("Share"), "share"))) {
                 MP::RequestShare(f.kind, f.name);
             }
@@ -82,6 +97,8 @@ void Render() {
         }
     }
     ImGui::EndChild();
+
+    if (!s.session) return;
 
     // ---- the pool ----
     char head[128];
@@ -118,7 +135,8 @@ void Render() {
         }
         ImGui::EndTable();
     }
-    ImGui::TextDisabled("%s", l10n::T("Removing a file from the pool keeps every copy already made."));
+    ImGui::TextDisabled("%s", l10n::T("A file you play on a TV or the radio, or hang in a frame, is shared by itself. "
+                                      "Removing a file from the pool keeps every copy already made."));
 }
 
 }  // namespace ui::media_panel
