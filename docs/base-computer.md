@@ -142,7 +142,9 @@ are born into a hand and spawn inert on the host until the holder's pose stream 
 disc is not held by anyone, so it falls on the host instead. Either way the disc's files and
 remaining writes travel as its save record behind the birth; a disc the host ejects gets its record
 from the host's finish-spawning drain, since the eject fills the disc in after the finish call
-([props.md](props.md)).
+([props.md](props.md)). The drain sends it for a disc the host takes out of a pocket too, which its
+init announces before the game fills it in, and the host sends a disc's record again whenever it takes
+one in hand: a client left with a blank copy once wiped the host's disc with its next insert or drop.
 
 The laptop's slot crosses as one blob, and the save JSON carries the rows a second time, so a disc
 with a few dozen rows is kilobytes. The blob is held to the ceiling the server slot uses and refused
