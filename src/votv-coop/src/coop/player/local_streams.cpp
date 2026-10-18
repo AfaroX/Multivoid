@@ -49,6 +49,9 @@ coop::net::WireKey g_lastHeldKey{};
 // for a morph-bound clump may run) and reused per tick; a held actor's identity is stable for
 // the carry. kInvalidId = unkeyed.
 coop::element::ElementId g_lastHeldEid = coop::element::kInvalidId;
+// The held actor is a part its parent spawns (a fridge's door): it has no identity a peer could
+// resolve, so its pose is not streamed; the parent's lane carries what the part changes.
+bool g_lastHeldIsPart = false;
 // This peer's hold generation: a new one at every new-held edge, carried by each pose and closed by
 // the release, so a receiver can tell a late pose of an ended hold from the next hold. Wraps, skips 0.
 uint16_t g_holdGen = 0;
@@ -197,6 +200,7 @@ void OnSessionStart() {
     g_lastHeldProp.Reset();
     g_lastHeldKey = {};
     g_lastHeldEid = coop::element::kInvalidId;
+    g_lastHeldIsPart = false;
     g_propEmitCount = 0;
     g_wasRagdolling = false;
     g_ragdollEmitCount = 0;
@@ -296,6 +300,7 @@ void Tick(coop::net::Session& session, void* local, void* controller) {
             // EnsureHeldItemBroadcast is false for a clump; an Aprop_C is broadcast as a fresh
             // keyed prop. The wire eid resolves once here and is cached for the carry.
             const bool mirrored = coop::trash_collect_sync::EnsureHeldItemBroadcast(heldActor, &session);
+            g_lastHeldIsPart = ue_wrap::engine::IsChildActor(heldActor);
             // The host's grab adoption: the clump's identity is its birth certificate (every clump
             // is born from a chipPile, on an E-press or a use-hold alike). An existing tracked
             // clump re-entering the hand resolves by the tracker. A "no certificate mid-carry means
@@ -356,7 +361,7 @@ void Tick(coop::net::Session& session, void* local, void* controller) {
             // the field, 91 poses in 1.5 s no peer could resolve, and an item invisible to everyone
             // but its holder). Reported once per held edge with the actor named, and not
             // suppressed: a key-only pose is legitimate when both peers share a save-loaded prop.
-            if (!mirrored && g_lastHeldEid == coop::element::kInvalidId) {
+            if (!mirrored && g_lastHeldEid == coop::element::kInvalidId && !g_lastHeldIsPart) {
                 UE_LOGW("local_streams: CARRY-ONLY WITH NO WIRE IDENTITY -- held actor %p "
                         "cls='%ls' key='%ls' is streaming a held pose with eid=0 and no spawn "
                         "broadcast, so a receiver can resolve NEITHER term. Every carry-only "
@@ -405,8 +410,9 @@ void Tick(coop::net::Session& session, void* local, void* controller) {
         // peer with unresolved-pose warnings for an actor it will never have. The stream resumes
         // the instant the item is expressed; g_lastHeldProp is still tracked so the release edge
         // works, and a PropRelease for a never-expressed prop is harmless.
-        if (!poseRead) {
-            // An unreadable held prop streams no pose this tick; its identity is kept below.
+        if (!poseRead || g_lastHeldIsPart) {
+            // An unreadable held prop streams no pose this tick, nor does a parent's part; the
+            // identity is kept below so the release edge works.
         } else if (pp.key.len > 0 || pp.elementId != 0) {
             session.SetLocalPropPose(true, pp);
             // The first 3 and every 60th, matching the receiver's throttle so the two logs diff
@@ -559,7 +565,8 @@ void Tick(coop::net::Session& session, void* local, void* controller) {
                     rel.hasPose = 1;
                 }
             }
-            session.SendPropRelease(rel);
+            // A parent's part streamed no pose, so its let-go names nothing a receiver holds.
+            if (!g_lastHeldIsPart) session.SendPropRelease(rel);
             // The host owns everything at rest, and a let-go prop lands by each peer's own physics
             // from the same transform and velocity, so the copies come to rest apart (docs/props.md,
             // Known limits). The host's own release hands the prop to the driven-prop channel, which
@@ -579,6 +586,7 @@ void Tick(coop::net::Session& session, void* local, void* controller) {
         g_lastHeldProp.Reset();
         g_lastHeldKey = {};
         g_lastHeldEid = coop::element::kInvalidId;  // the cached held eid goes with the release
+        g_lastHeldIsPart = false;
         if (coastActor) coop::prop_drive_host::Coast(coastActor, "host release");
         }
     }

@@ -159,7 +159,9 @@ curing -- named once per class and left to its anchor design rather than streame
 While a prop is held, its holder owns it. The holder streams the held prop's world transform every
 frame, unreliable and newest-wins, under a generation it mints at the grab
 (`coop/player/local_streams`). A receiver resolves the prop by key, turns its physics off, and
-goes to each pose as it arrives (`coop/props/remote_prop`, `coop/props/active_drive`). The first pose
+goes to each pose as it arrives (`coop/props/remote_prop`, `coop/props/active_drive`). A part its
+parent spawns on every peer, such as a fridge's door, has no identity of its own and is not streamed:
+its parent's state carries what the part changes. The first pose
 of a hold and a jump past 5 m place the copy; the steady stream moves it, a kinematic move rather than
 a teleport, so the parked body has the frame's velocity and carries what rests on or in it. A stack
 in a carried bucket is kept by plain physics on the carrier's machine -- an open container glues
@@ -231,7 +233,8 @@ A prop another prop strikes moving has no verb of its own, so it once moved on e
 own physics and rested apart. Every prop carries `comp_physicsImpact`, whose contact report runs through
 the component's `hitCpp`; on the host, after it runs, a prop now simulating faster than 5 cm/s is put
 on the driven-prop channel, which streams it until it rests and ends with the host's pose
-(`coop/props/knock_stream`). A carried prop's copy moves rather than teleports on every peer, so what a
+(`coop/props/knock_stream`); a prop with no element id yet, such as a client's drop the host spawned that
+tick, is not. A carried prop's copy moves rather than teleports on every peer, so what a
 client's carried prop pushes over on the host streams the same way. A streamed knocked prop's copy is
 placed at each pose instead: moving, a kinematic copy pushes as if it had no end of mass, and one slid
 under a table threw the table across one screen while the host's stood still.

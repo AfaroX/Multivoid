@@ -225,6 +225,10 @@ bool EnsureHeldItemBroadcast(void* heldActor, coop::net::Session* s) {
     // its host-range eid instead, which the host resolves and drives kinematically. On the host
     // this is redundant (its kerfur prop is tracker-known), but the gate is role-agnostic.
     if (coop::kerfur_entity::IsKerfurActor(heldActor)) return false;
+    // A part its parent spawns (a fridge's door) is spawned and destroyed by the parent on every
+    // peer and has no element id, so a receiver could never resolve it; the parent's own lane
+    // carries what the part changes.
+    if (ue_wrap::engine::IsChildActor(heldActor)) return false;
     // The clump gate: a garbageClump is a host-authoritative trash entity whose identity is the
     // source pile's eid, bound at the convert seam and carried by the held-pose stream. Expressed
     // here as a fresh-eid keyless spawn it would be a second cross-peer entity, so a stray clump is

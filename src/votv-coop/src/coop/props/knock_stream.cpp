@@ -4,6 +4,7 @@
 
 #include "coop/net/session.h"
 #include "coop/props/prop_drive_host.h"
+#include "coop/props/prop_element_tracker.h"
 
 #include "ue_wrap/actors/prop.h"
 #include "ue_wrap/core/log.h"
@@ -43,8 +44,11 @@ void OnHitPost(const sg::Call& c) {
     const float sp = std::sqrt(v.linearCmS.X * v.linearCmS.X + v.linearCmS.Y * v.linearCmS.Y +
                                v.linearCmS.Z * v.linearCmS.Z);
     if (sp < kMovingCmS) return;
-    // Refused there for a prop in a hand or with no wire identity; a prop already streaming restarts its
-    // rest clock.
+    // A prop with no element id has no copy a peer could move -- a client's drop the host spawned this
+    // very tick, before its id is minted, is the usual one -- so its knock is no news.
+    const coop::element::ElementId eid = coop::prop_element_tracker::GetPropElementIdForActor(prop);
+    if (eid == coop::element::kInvalidId || eid == 0u) return;
+    // Refused there for a prop in a hand; a prop already streaming restarts its rest clock.
     coop::prop_drive_host::Coast(prop, "knock");
     ++g_knocks;
 }
