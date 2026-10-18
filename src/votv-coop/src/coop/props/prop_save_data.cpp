@@ -4,6 +4,7 @@
 #include "coop/props/record_sync.h"
 
 #include "coop/dev/food_clock_probe.h"   // [dev] the food catch-up's two clocks, read at these seams
+#include "coop/interactables/floppy_slot_sync.h"  // RepairEjectedDisc
 #include "coop/items/save_record_wire.h"
 #include "coop/net/blob_chunks.h"
 #include "coop/net/session.h"
@@ -316,7 +317,9 @@ bool TryApply(void* actor, const std::wstring& key, const SR::SaveRecord& rec) {
     // what it now holds: a peer that became ready while the key was awaited was declined by its join
     // seed then. Not at its arrival: a record that arrives before the host's actor is indexed is
     // parked, and the spawn drain runs in that gap and would publish the class default it spawned.
-    if (g_awaiting.erase(key) && g_session) Publish(g_session, actor, key);
+    // A disc a client ejected from a server box it saw stale gets the box's rows as the host held them.
+    const bool repaired = PT::SessionIsHost() && coop::floppy_slot_sync::RepairEjectedDisc(actor, key);
+    if ((g_awaiting.erase(key) || repaired) && g_session) Publish(g_session, actor, key);
     return true;
 }
 

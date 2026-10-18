@@ -6,6 +6,8 @@
 #include "coop/interactables/laptop_buffer_sync.h"  // the quad's shadow primes after a laptop apply
 #include "coop/net/blob_chunks.h"
 #include "coop/net/session.h"
+#include "coop/props/prop_key_index.h"   // the ejected disc, by its key
+#include "coop/props/prop_save_data.h"   // StillAwaited, Publish: the repaired disc goes out
 
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
@@ -36,6 +38,9 @@ namespace GT = ue_wrap::game_thread;
 std::atomic<coop::net::Session*> g_session{nullptr};
 
 constexpr uint64_t kSweepMs = 1000;   // the server lane's own cadence
+// The host's own: a change it makes reaches a client's copy of the box this much sooner, which narrows the
+// window in which that client acts on the box as it was (RepairEjectedDisc closes what is left of it).
+constexpr uint64_t kHostSweepMs = 250;
 
 // The identity is the device's index in its kind's own list, and the list is the gamemode's
 // servers[]: the level places the boxes, so both peers build the same order. The cap is
@@ -193,6 +198,16 @@ struct Awaiting { uint64_t deadline = 0; int tries = 0; };
 std::map<uint32_t, Awaiting> g_awaiting;
 constexpr uint64_t kAnswerMs = 4000;
 constexpr int      kMaxClaimTries = 3;
+
+// HOST: what a server box held when a client's claim emptied it, by the key of the disc that came out. The
+// disc reaches the host as that client's fresh birth with that client's record, a second or so behind the
+// claim (the box's eject spawns at the end of its own timeline) or just ahead of it.
+struct Ejected { int32_t readWrites = -1; std::vector<std::wstring> rows; uint64_t deadline = 0; uint8_t slot = 0; };
+std::map<std::wstring, Ejected> g_ejected;
+constexpr uint64_t kEjectRepairMs = 15000;
+constexpr size_t   kMaxEjected = 32;
+uint64_t g_repaired = 0;
+uint64_t g_nextSlowMs = 0;
 
 // HOST: a joiner whose connect set the transport refused has a permanently stale world -- the 1 Hz
 // sweep covers edges, not a set nobody asked for. Re-send it.
@@ -576,12 +591,18 @@ void Tick() {
     if (!s || !s->connected()) return;
     const uint64_t now = NowMs();
     if (now < g_nextSweep) return;
-    g_nextSweep = now + kSweepMs;
-
-    g_asm.Sweep(std::chrono::steady_clock::now(), std::chrono::seconds(10));
-
     const bool host = IsHost();
-    if (host) DrainConnectRetries(s);
+    g_nextSweep = now + (host ? kHostSweepMs : kSweepMs);
+    for (auto it = g_ejected.begin(); it != g_ejected.end();)
+        it = now >= it->second.deadline ? g_ejected.erase(it) : std::next(it);
+
+    // The assemblers and the connect retries keep the lane's own second: a retry's count is a budget of
+    // seconds, not of sweeps.
+    if (now >= g_nextSlowMs) {
+        g_nextSlowMs = now + kSweepMs;
+        g_asm.Sweep(std::chrono::steady_clock::now(), std::chrono::seconds(10));
+        if (host) DrainConnectRetries(s);
+    }
 
     for (FS::DeviceKind kind : kKinds) SweepKind(s, kind, host);
 }
@@ -657,6 +678,17 @@ void OnChunk(const coop::net::BlobChunkPayload& p, uint8_t senderSlot) {
         const bool held = ReadSlotOf(kind, devices[index], prev) && prev.st.floppyType >= 0;
         const std::wstring prevKey = held ? FS::ObjectDataKey(prev.c.objectData) : std::wstring();
         const std::wstring inKey = FS::ObjectDataKey(in.c.objectData);
+        // An eject: the disc that comes out of the client's box is filled from that client's copy of it, so
+        // the host keeps what its own box held for that disc until it arrives.
+        const bool ejected = kind == FS::DeviceKind::ServerBox && held && in.st.floppyType < 0 && !prevKey.empty();
+        if (ejected) {
+            if (g_ejected.size() >= kMaxEjected) g_ejected.erase(g_ejected.begin());
+            Ejected& e = g_ejected[prevKey];
+            e.readWrites = prev.st.readWrites;
+            e.rows = prev.c.data;
+            e.deadline = NowMs() + kEjectRepairMs;
+            e.slot = senderSlot;
+        }
         ApplySlot(kind, index, devices[index], in);
         UE_LOGI("floppy_slot_sync: HOST took slot claim (device=%u type=%d rw=%d rows=%zu key "
                 "'%ls') from slot %u -- answering with the canonical; the host's slot held type %d "
@@ -670,6 +702,12 @@ void OnChunk(const coop::net::BlobChunkPayload& p, uint8_t senderSlot) {
         // The re-publish IS the acknowledgement, and it goes to the author too: if the host's own
         // copy differs from what the claim said, the author is the peer that most needs correcting.
         HostBroadcastOne(s, kind, index, devices[index]);
+        // The disc may be here already, its record landed ahead of this claim.
+        if (ejected) {
+            void* disc = coop::prop_key_index::Find(prevKey);
+            if (disc && !coop::prop_save_data::StillAwaited(prevKey) && RepairEjectedDisc(disc, prevKey))
+                coop::prop_save_data::Publish(s, disc, prevKey);
+        }
         return;
     }
 
@@ -728,6 +766,32 @@ void OnChunk(const coop::net::BlobChunkPayload& p, uint8_t senderSlot) {
                 "matched, %d skipped (of %zu local)", applied, unchanged, skipped, n);
 }
 
+bool RepairEjectedDisc(void* disc, const std::wstring& key) {
+    if (!disc || key.empty() || !IsHost()) return false;
+    auto it = g_ejected.find(key);
+    if (it == g_ejected.end()) return false;
+    if (NowMs() >= it->second.deadline) { g_ejected.erase(it); return false; }
+    if (!ue_wrap::floppy_disc::EnsureResolved() || !ue_wrap::floppy_disc::IsDiscClass(R::ClassOf(disc))) return false;
+    ue_wrap::floppy_disc::DiscContent cur;
+    if (!ue_wrap::floppy_disc::ReadDiscContent(disc, cur)) return false;
+    const Ejected e = it->second;
+    g_ejected.erase(it);   // one disc came out per eject: answered either way
+    if (cur.data == e.rows && cur.readWrites == e.readWrites) return false;   // the client's box was current
+    ue_wrap::floppy_disc::DiscContent fixed;
+    fixed.readWrites = e.readWrites;
+    fixed.data = e.rows;
+    if (!ue_wrap::floppy_disc::WriteDiscContent(disc, fixed)) {
+        UE_LOGW("floppy_slot_sync: could not write the box's rows back onto the disc keyed '%ls'", key.c_str());
+        return false;
+    }
+    ++g_repaired;
+    UE_LOGI("floppy_slot_sync: HOST repaired the disc keyed '%ls' that slot %u ejected from a box it saw stale: "
+            "rows %zu -> %zu, writes %d -> %d (the host's box held these) -- %llu repaired",
+            key.c_str(), static_cast<unsigned>(e.slot), cur.data.size(), e.rows.size(), cur.readWrites,
+            e.readWrites, static_cast<unsigned long long>(g_repaired));
+    return true;
+}
+
 void QueueConnectBroadcastForSlot(int peerSlot) {
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || s->role() != coop::net::Role::Host) return;
@@ -769,6 +833,8 @@ void OnDisconnect() {
     g_unsendable.clear();
     g_awaiting.clear();
     g_connectRetry.clear();
+    g_ejected.clear();
+    g_repaired = 0;
     for (bool& have : g_haveCanonical) have = false;
     g_laptopGen = 0;
     g_laptopGenDigest = 0;
@@ -778,6 +844,7 @@ void OnDisconnect() {
     g_rate.clear();
     g_asm.Clear();
     g_nextSweep = 0;
+    g_nextSlowMs = 0;
     g_session.store(nullptr, std::memory_order_release);
 }
 

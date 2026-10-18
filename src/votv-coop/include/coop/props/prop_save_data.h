@@ -76,6 +76,10 @@ bool PublishWithSpawn(coop::net::Session* s, void* actor, const coop::net::WireK
 // carry (`Covers`) is never owed one, so `actor` of such a class is not awaited at all.
 void ExpectRecordFor(void* actor, const std::wstring& key, uint8_t senderSlot);
 
+// HOST: whether the client author's record for `key` is still owed (ExpectRecordFor). A caller that
+// would publish the key itself waits for it: what it would publish is not yet the author's state.
+bool StillAwaited(const std::wstring& key);
+
 // A chunk of either kind off the wire. `intent` distinguishes PropSaveDataIntent (a client's
 // claim, which only the host acts on) from PropSaveData (the canonical). The session is the one
 // the host re-publishes a taken claim on.
