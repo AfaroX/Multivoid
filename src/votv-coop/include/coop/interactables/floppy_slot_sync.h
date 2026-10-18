@@ -56,6 +56,13 @@ bool LaptopOccupancySettled();
 // after it land in one frame, before the host can answer. Game thread.
 void DevClaimLaptopNow();
 
+// HOST: `disc` (keyed `key`) just landed a client's record. When a claim from a client emptied a server box
+// that held this disc in the last few seconds, the disc gets the rows and writes the HOST's box held: the
+// client ejected from its own copy of the box, which can trail the host's by a poll and a round trip -- a
+// SAT console export the host ran a moment earlier was on the host's box only, and that eject lost it on
+// every peer. True when the disc was rewritten, so the caller publishes it. Game thread.
+bool RepairEjectedDisc(void* disc, const std::wstring& key);
+
 // A slot teardown: the leaver's half assemblies and rate window must not survive into whoever
 // recycles that slot.
 void OnPeerGone(uint8_t senderSlot);
