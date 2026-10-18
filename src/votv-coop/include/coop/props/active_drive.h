@@ -118,9 +118,10 @@ inline void ResetDriveState(ActiveDrive& d) {
 // Record a new host pose (world loc + rot) as the lerp TARGET. First pose for an identity (or a
 // far jump) snaps; otherwise interpolate from the CURRENT rendered transform over the measured
 // pose interval. Game thread. (Decoupled from any wire struct so BOTH the PropPose receiver and
-// the TrashCarryPose receiver feed it.)
+// the TrashCarryPose receiver feed it.) `carry` is a player's hold: its copy moves between poses
+// rather than being placed at each, so what it carries comes with it.
 inline void BeginLerpToPose(ActiveDrive& d, const ue_wrap::FVector& nloc,
-                            const ue_wrap::FRotator& nrot, uint64_t nowMs) {
+                            const ue_wrap::FRotator& nrot, uint64_t nowMs, bool carry = false) {
     // Distance from the LAST RECEIVED pose (not the rendered position): detects a teleport / post-gap
     // catch-up that should snap rather than crawl across the map. (Comparing to renderedLoc would mistake
     // a normal render-delay lag for a teleport.)
@@ -137,12 +138,14 @@ inline void BeginLerpToPose(ActiveDrive& d, const ue_wrap::FVector& nloc,
         d.haveTwoSnaps = false;     // only one distinct sample -> sit at it until the next pose
         d.lerpSeeded   = true;
         if (void* a = d.LiveActor()) {
-            // The held item's steady stream MOVES the parked body rather than snapping it: a snap gives the
+            // A held item's steady stream MOVES the parked body rather than snapping it: a snap gives the
             // kinematic body no velocity, so a stack resting in a carried bucket was left behind and spilled
             // on every peer but the carrier's, where the game keeps the contents by plain physics while it is
             // carried (prop_openContainer_C glues them only once they rest). The first pose and a far jump
-            // still place it, since a move across a gap would fling whatever it touched.
-            if (place || !E::MoveActorKinematic(a, nloc, nrot)) {
+            // still place it, since a move across a gap would fling whatever it touched. Only a hold moves:
+            // a moving kinematic body pushes as if it had no end of mass, and a knocked prop the host's
+            // stream drives slid under a table here and threw it across the room, on this screen alone.
+            if (place || !carry || !E::MoveActorKinematic(a, nloc, nrot)) {
                 E::SetActorLocation(a, nloc);
                 E::SetActorRotation(a, nrot);
             }

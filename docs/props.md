@@ -150,7 +150,9 @@ of a hold and a jump past 5 m place the copy; the steady stream moves it, a kine
 a teleport, so the parked body has the frame's velocity and carries what rests on or in it. A stack
 in a carried bucket is kept by plain physics on the carrier's machine -- an open container glues
 its contents only once they come to rest, and lets go of them when it is woken or tipped -- and a
-teleported copy left the stack behind, spilled on every other peer. A grab changes
+teleported copy left the stack behind, spilled on every other peer. Only a hold moves its copy: a prop the driven-prop channel
+streams is placed at each pose, since a moving kinematic copy pushes as if it had no end of mass and threw
+whatever it slid into across one screen alone. A grab changes
 the prop as well as moving it, on the grabbing machine only: the base prop's grab prelude clears its
 lifespan, broadcasts that it was touched and wakes and unfreezes it, and a prop carrying the
 wall-attach component runs the component's unstick instead. So the first pose of a hold runs the

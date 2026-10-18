@@ -360,7 +360,7 @@ void Tick(coop::net::Session& session) {
             if (drive.LiveActor()) {
                 // The pose is the new lerp target; AdvanceLerp moves the actor toward it each tick.
                 BeginLerpToPose(drive, ue_wrap::FVector{pose.x, pose.y, pose.z},
-                                ue_wrap::FRotator{pose.pitch, pose.yaw, pose.roll}, nowMs);
+                                ue_wrap::FRotator{pose.pitch, pose.yaw, pose.roll}, nowMs, /*carry=*/true);
                 drive.lastApplyMs = nowMs;
                 // The first 3 and every 60th target per slot.
                 static std::array<uint64_t, coop::players::kMaxPeers> sApplyCount{};
