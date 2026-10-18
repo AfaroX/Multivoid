@@ -57,8 +57,11 @@ sent relative to the asset folder (`@assets:`) and rebuilt from the receiver's o
 path names each machine's user. A client opens the same link, follows the play state, and seeks when it
 drifts past two seconds. A pause, a resume or a scrub its own player makes is sent to the host as an
 intent, and a scrub on the host's goes out at once: a position further from where play would have put it
-than a second and a half is a scrub. A link to a file the pool has not brought yet waits for it, on a
-client and on the host for a client's pick, and opens once it lands (`coop/media/media_playback`).
+than a second and a half is a scrub. A client's own pick plays on its screen at once -- nobody's
+download holds it back -- and reports its position every two seconds; the host's copy opens it as soon as
+the file is there, joins that position once it has settled, and only then sends its state, so no screen
+is pulled back to the start. Any other peer opens a link to a file the pool has not brought yet once it
+lands, and seeks to where the host is (`coop/media/media_playback`).
 
 ## Who owns what
 

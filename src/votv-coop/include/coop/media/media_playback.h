@@ -9,8 +9,9 @@
 // relative to its own asset folder (the pool puts the same file there under the same name), and seeks
 // when it drifts past two seconds; a client's `fin` is refused, the host's choice coming instead. A
 // pause, a resume or a scrub a client's player makes on its own copy is sent to the host the same way,
-// and a scrub on the host's goes out at once. A played file not yet pooled is shared, and every peer --
-// the host for a client's pick included -- opens it once the pool has brought it.
+// and a scrub on the host's goes out at once. A played file not yet pooled is shared, and every other
+// peer opens it once the pool has brought it. A client's own pick plays on its screen at once, reports
+// its position, and the host's copy joins it there before the host sends anything about it.
 // Gameplay/network layer (principle 7). Game thread.
 
 #pragma once
