@@ -23,6 +23,7 @@
 #include <atomic>
 #include <cstring>
 #include <map>
+#include <set>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -43,6 +44,7 @@ constexpr float    kNearCm     = 60.f;    // an outlet named otherwise is the on
 constexpr uint64_t kSocketsMs  = 3000;    // the outlet list is walked again after this
 constexpr uint64_t kAssertMs   = 20000;   // a joiner holds what the host sent this long while its load settles
 constexpr uint64_t kAssertStep = 1000;
+constexpr uint64_t kDragMs     = 66;      // a dragged head's pose, at most this often
 
 std::atomic<coop::net::Session*> g_session{nullptr};
 bool g_watched[4] = {}, g_saidLive[4] = {};
@@ -53,6 +55,13 @@ uint64_t g_sent = 0, g_applied = 0;
 R::InstanceOffset g_cordSocket(L"socket");    // cord_C.socket: the outlet it is in, or null
 R::InstanceOffset g_cordParent(L"parent");    // cord_C.parent: the item it powers
 R::InstanceOffset g_itemCord(L"obj_cord");    // prop_corded_C.obj_cord: the item's cord
+R::InstanceOffset g_cordHead(L"head");        // cord_C.head: the plug's component
+R::InstanceOffset g_cordDrag(L"drag");        // cord_C.drag: true while this machine's player drags it
+
+// The drag: this machine's player's cords streaming their head, and the cords another player drags here.
+struct DragSent { uint64_t at = 0; ue_wrap::FVector loc{}; };
+std::map<void*, DragSent> g_localDrag;
+std::set<void*> g_remoteDrag;
 R::ParamOffset g_pSocket(L"socket"), g_pLoad(L"load");
 
 uint64_t NowMs() { return static_cast<uint64_t>(::GetTickCount64()); }
@@ -162,6 +171,30 @@ void SendFor(coop::net::Session* s, void* item, void* socket, const char* why) {
             coop::net::StringFromWireKey(p.socket).c_str());
 }
 
+bool ReadBoolField(void* obj, R::InstanceOffset& field) {
+    if (!obj) return false;
+    const int32_t off = field.Of(obj);
+    return off >= 0 && static_cast<const uint8_t*>(obj)[off] != 0;
+}
+
+bool CallCordVerb(void* cord, const wchar_t* verb) {
+    void* fn = R::FindDispatchFunctionCached(R::ClassOf(cord), verb);
+    if (!fn) return false;
+    ue_wrap::ParamFrame f(fn);
+    return f.valid() && ue_wrap::Call(cord, f);
+}
+
+// USceneComponent::K2_SetWorldLocation with a teleport: a dragged head goes where the dragger's is.
+bool SetHeadPose(void* head, const ue_wrap::FVector& at, const ue_wrap::FRotator& rot) {
+    void* fn = R::FindDispatchFunctionCached(R::ClassOf(head), L"K2_SetWorldLocation");
+    if (!fn) return false;
+    ue_wrap::ParamFrame f(fn);
+    if (!f.valid() || !f.Set<ue_wrap::FVector>(L"NewLocation", at)) return false;
+    f.Set<bool>(L"bTeleport", true);
+    if (!ue_wrap::Call(head, f)) return false;
+    return ue_wrap::engine::SetComponentWorldRotation(head, rot);
+}
+
 // ---- applying ----
 
 void* ResolveItem(const coop::net::CordPlugPayload& p) {
@@ -181,12 +214,21 @@ bool Apply(const coop::net::CordPlugPayload& p, const char* why) {
         return false;
     }
     void* current = ReadObj(cord, g_cordSocket);
+    if (p.plugged == 2) {
+        // Another player drags it: out of the outlet, its head where theirs is. This machine's own drag of
+        // the same cord, which a relay echoes back, keeps its own.
+        if (ReadBoolField(cord, g_cordDrag)) return true;
+        if (current && !CallCordVerb(cord, L"disconnect")) return false;
+        void* head = ReadObj(cord, g_cordHead);
+        if (!head) return false;
+        g_remoteDrag.insert(cord);
+        return SetHeadPose(head, ue_wrap::FVector{p.sx, p.sy, p.sz}, ue_wrap::FRotator{p.hp, p.hy, p.hr});
+    }
+    const bool wasDragged = g_remoteDrag.erase(cord) != 0;
     if (!p.plugged) {
-        if (!current) return true;
-        void* fn = R::FindDispatchFunctionCached(R::ClassOf(cord), L"disconnect");
-        if (!fn) return false;
-        ue_wrap::ParamFrame f(fn);
-        if (!f.valid() || !ue_wrap::Call(cord, f)) return false;
+        // A drag that ended in no outlet puts the head back on the item; disconnect does that.
+        if (!current && !wasDragged) return true;
+        if (!CallCordVerb(cord, L"disconnect")) return false;
         ++g_applied;
         UE_LOGI("cord_sync: %s -- item '%ls' unplugged here", why, coop::net::StringFromWireKey(p.item).c_str());
         return true;
@@ -231,6 +273,7 @@ void Forget(void* item) {
 void OnConnectPost(const sg::Call& c) {
     auto* s = Live();
     if (!s || c.fromOurCode || !c.object || !c.locals) return;
+    g_localDrag.erase(c.object);   // a drag that ends in an outlet ends with its plug
     const int32_t lo = g_pLoad.Of(c.function), so = g_pSocket.Of(c.function);
     if (lo < 0 || so < 0 || c.locals[lo] != 0) return;   // the load-time reconnect is every peer's own
     void* socket = nullptr;
@@ -244,8 +287,13 @@ void OnConnectPost(const sg::Call& c) {
 sg::Verdict OnDisconnectPre(const sg::Call& c) {
     auto* s = Live();
     if (!s || c.fromOurCode || !c.object || c.object == g_destroying) return sg::Verdict::Run;
-    if (!ReadObj(c.object, g_cordSocket)) return sg::Verdict::Run;   // not in an outlet: nothing changes
     void* item = ReadObj(c.object, g_cordParent);
+    if (!ReadObj(c.object, g_cordSocket)) {
+        // Not in an outlet. A drag of this player's that ends here, in no outlet, puts the head back on the
+        // item on every screen.
+        if (g_localDrag.erase(c.object) && item) SendFor(s, item, nullptr, "drag ended");
+        return sg::Verdict::Run;
+    }
     if (!item) return sg::Verdict::Run;
     if (c.object == g_inTick) {
         // Stretched too far: the host's copy decides, so a client's copy that strayed keeps the plug.
@@ -259,7 +307,31 @@ sg::Verdict OnDisconnectPre(const sg::Call& c) {
 }
 
 sg::Verdict OnTickPre(const sg::Call& c) { g_inTick = c.object; return sg::Verdict::Run; }
-void OnTickPost(const sg::Call&) { g_inTick = nullptr; }
+
+// After the cord's tick: one this machine's player drags has its head where the tick put it, which is
+// streamed to every other screen.
+void OnTickPost(const sg::Call& c) {
+    g_inTick = nullptr;
+    auto* s = Live();
+    if (!s || !c.object || !ReadBoolField(c.object, g_cordDrag)) return;
+    void* item = ReadObj(c.object, g_cordParent);
+    void* head = ReadObj(c.object, g_cordHead);
+    if (!item || !head) return;
+    const uint64_t now = NowMs();
+    DragSent& d = g_localDrag[c.object];
+    const ue_wrap::FVector at = ue_wrap::engine::GetComponentLocation(head);
+    const float dx = at.X - d.loc.X, dy = at.Y - d.loc.Y, dz = at.Z - d.loc.Z;
+    if (now - d.at < kDragMs || (d.at && dx * dx + dy * dy + dz * dz < 1.f)) return;
+    coop::net::CordPlugPayload p{};
+    if (!Fill(item, nullptr, p)) return;
+    const ue_wrap::FRotator rot = ue_wrap::engine::GetComponentWorldRotation(head);
+    p.plugged = 2;
+    p.sx = at.X; p.sy = at.Y; p.sz = at.Z;
+    p.hp = rot.Pitch; p.hy = rot.Yaw; p.hr = rot.Roll;
+    s->SendReliable(coop::net::ReliableKind::CordPlug, &p, sizeof(p));
+    d.at = now;
+    d.loc = at;
+}
 sg::Verdict OnDestroyedPre(const sg::Call& c) { g_destroying = c.object; return sg::Verdict::Run; }
 void OnDestroyedPost(const sg::Call&) { g_destroying = nullptr; }
 
@@ -309,8 +381,10 @@ void OnCordPlug(coop::net::Session& session, const coop::net::CordPlugPayload& p
         session.SendReliable(coop::net::ReliableKind::CordPlug, &payload, sizeof(payload));   // to everyone
         return;
     }
-    // Held a while: a newer word from the host replaces it, and this player's own plug drops it.
-    g_assert[ItemId(payload)] = Asserted{payload, NowMs() + kAssertMs};
+    // Held a while: a newer word from the host replaces it, and this player's own plug drops it. A dragged
+    // head is the moment's alone: it ends what was held.
+    if (payload.plugged == 2) g_assert.erase(ItemId(payload));
+    else g_assert[ItemId(payload)] = Asserted{payload, NowMs() + kAssertMs};
 }
 
 void QueueConnectBroadcastForSlot(int peerSlot) {
@@ -336,6 +410,8 @@ void OnDisconnect() {
                 static_cast<unsigned long long>(g_applied));
     g_sent = g_applied = 0;
     g_assert.clear();
+    g_localDrag.clear();
+    g_remoteDrag.clear();
     g_outlets.clear();
     g_outletsAt = 0;
     g_inTick = g_destroying = nullptr;

@@ -57,6 +57,12 @@ void CloseHold(int slot, uint16_t holdGen);
 // frame, a visible pop.
 bool IsActorUnderAnyDrive(void* actor);
 
+// This player pressed use on `actor`, which another peer coasts here (its hold let go, the prop still
+// moving): the copy gets its physics back and that slot's hold is closed here, so the grab takes it and this
+// player streams it from then on. False when no coast drives it; a held prop stays another player's. Game
+// thread.
+bool YieldCoastForGrab(void* actor);
+
 // Register a wire-received prop mirror Element at `eid` bound to `actor`. Idempotent for
 // duplicate eids (a silent no-op); skips an eid of 0 (an unminted sender) and the invalid id.
 // The register-mirror pattern: allocate, insert under the manager mutex, register, roll back

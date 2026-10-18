@@ -3,6 +3,8 @@
 #include "coop/props/part_index.h"
 
 #include "coop/element/portable_identity.h"
+#include "coop/props/prop_key_index.h"
+#include "coop/props/remote_prop.h"  // ResolveLiveActorByEid
 
 #include "ue_wrap/actors/prop.h"          // IsDescendantOfProp
 #include "ue_wrap/core/cached_obj_ref.h"
@@ -61,6 +63,21 @@ void* Find(const std::wstring& wireKey) {
     Walk(now);
     it = g_parts.find(wireKey);
     return it != g_parts.end() ? it->second.Get() : nullptr;
+}
+
+std::wstring WireKeyFor(void* actor) {
+    if (!actor) return std::wstring();
+    if (ue_wrap::engine::IsChildActor(actor)) return coop::element::PortableWireKey(actor);
+    const std::wstring k = ue_wrap::prop::GetInteractableKeyString(actor);
+    return (k.empty() || k == L"None") ? std::wstring() : k;
+}
+
+void* ResolveWire(const std::wstring& wireKey, uint32_t eid) {
+    if (!wireKey.empty() && wireKey != L"None") {
+        void* a = IsPartKey(wireKey) ? Find(wireKey) : coop::prop_key_index::Find(wireKey);
+        if (a) return a;
+    }
+    return eid ? coop::remote_prop::ResolveLiveActorByEid(eid) : nullptr;
 }
 
 void OnDisconnect() {

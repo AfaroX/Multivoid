@@ -9,6 +9,7 @@
 
 #pragma once
 
+#include <cstdint>
 #include <string>
 
 namespace coop::part_index {
@@ -18,6 +19,14 @@ bool IsPartKey(const std::wstring& wireKey);
 
 // The live part `wireKey` names here, or null. A miss walks the world again, at most every two seconds.
 void* Find(const std::wstring& wireKey);
+
+// The key a peer names `actor` by on the wire: a part's portable key, else the prop's own Key; "" when it has
+// neither. Game thread.
+std::wstring WireKeyFor(void* actor);
+
+// The local actor a wire key (a part's or a prop's) and an eid name, key first; null when neither resolves.
+// Game thread.
+void* ResolveWire(const std::wstring& wireKey, uint32_t eid);
 
 void OnDisconnect();
 

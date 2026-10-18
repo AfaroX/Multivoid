@@ -356,9 +356,12 @@ uint64_t g_grabYields = 0;
 // grab that does not happen leaves the next pose to park it again and the end edge to land it, and one that
 // does is yielded to the hand at the next pose or end, as the tick yields one.
 void OnUseInputPre(void* self, void* /*function*/, void* /*params*/) {
-    if (g_drives.empty() || !self) return;
+    if (!self) return;
     void* target = ue_wrap::engine::ReadMainPlayerLookAtActor(self);
     if (!target) return;
+    // Another player's coast is handed over the same way (remote_prop), and the host's drive below.
+    if (coop::remote_prop::YieldCoastForGrab(target)) return;
+    if (g_drives.empty()) return;
     for (auto it = g_drives.begin(); it != g_drives.end(); ++it) {
         if (it->second.d.LiveActor() != target) continue;
         GiveBackPhysics(it->second, target);

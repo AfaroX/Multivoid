@@ -38,6 +38,7 @@
 #include "coop/items/broom_stroke.h"
 #include "coop/interactables/upgrade_sync.h"  // CLIENT->HOST upgrade purchase
 #include "coop/props/cord_sync.h"
+#include "coop/props/prop_tool_flags.h"
 #include "coop/props/trash_channel.h"
 
 #include "ue_wrap/core/log.h"
@@ -407,6 +408,20 @@ bool HandleIntentEvent(net::Session& session,
         net::CordPlugPayload p{};
         std::memcpy(&p, msg.payload, sizeof(p));
         coop::cord_sync::OnCordPlug(session, p, static_cast<uint8_t>(msg.senderPeerSlot));
+        break;
+    }
+    case net::ReliableKind::PropToolFlags: {
+        // A toolgun's flags on a prop: a client's to the host, which applies and relays it; the host's to all.
+        const bool fromHost = msg.senderPeerSlot == 0;
+        if (msg.payloadLen < sizeof(net::PropToolFlagsPayload) || msg.senderPeerSlot < 0 ||
+            msg.senderPeerSlot >= net::kMaxPeers || fromHost == (session.role() == net::Role::Host)) {
+            UE_LOGW("event_feed: PropToolFlags dropped (role, sender slot %d or length %zu)", msg.senderPeerSlot,
+                    static_cast<size_t>(msg.payloadLen));
+            break;
+        }
+        net::PropToolFlagsPayload p{};
+        std::memcpy(&p, msg.payload, sizeof(p));
+        coop::prop_tool_flags::OnToolFlags(session, p, static_cast<uint8_t>(msg.senderPeerSlot));
         break;
     }
     case net::ReliableKind::MediaPool:

@@ -36,6 +36,9 @@ void* LastHeldActor();
 // happened; the stick lane stamps its message with it, so the stick closes the hold it ended.
 uint16_t CurrentHoldGen();
 
+// The live local mainPlayer_C the last Tick was given, or null. Game thread.
+void* LocalPlayer();
+
 // Per-tick outbound publish. `local` is the live local mainPlayer_C,
 // `controller` its cached controller (may be null -- pose pitch falls back to
 // actor rotation). Publishes the pose snapshot, streams the held prop's world

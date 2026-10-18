@@ -6,8 +6,10 @@
 // of its own on the wire, so each player's plug stayed on their screen, and the item went unpowered on
 // every other. Here a player's connect and disconnect cross: the item by its key, the outlet by its
 // portable key (coop/element/portable_identity) with its location as the fallback, and every other peer
-// runs the same verb on its copy. A cord stretched too far comes out on the host's copy, which sends it;
-// a client's own tick leaves it in. The game's load-time reconnect and a dying cord's disconnect stay
+// runs the same verb on its copy. While a player drags a cord, its head's pose streams at about 15 Hz, so
+// every screen shows the cord running from the item to that player's hand until it goes into an outlet or
+// back onto the item. A cord stretched too far comes out on the host's copy, which sends it; a client's own
+// tick leaves it in. The game's load-time reconnect and a dying cord's disconnect stay
 // local. The host relays a client's plug and sends every corded item's cord to a joiner.
 // Wire: CordPlug. Gameplay/network layer (principle 7). Game thread.
 

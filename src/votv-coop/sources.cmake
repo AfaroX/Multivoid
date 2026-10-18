@@ -319,6 +319,7 @@ set(VOTVCOOP_SOURCES
     src/coop/props/knock_stream.cpp
     src/coop/props/cord_sync.cpp
     src/coop/props/part_index.cpp
+    src/coop/props/prop_tool_flags.cpp
     src/coop/props/prop_hit_authority.cpp
     src/coop/media/media_pool.cpp
     src/coop/media/media_frames.cpp

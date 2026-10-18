@@ -18,6 +18,7 @@
 #include "coop/props/record_sync.h"  // NoteTouched: the hold edges make a prop this peer's to author
 #include "coop/props/prop_wire_parity.h"  // PhysFlagsOf, the flags a release carries
 #include "coop/props/remote_prop.h"     // ResolveMirrorEidByActor (the bound-clump held-pose eid fallback)
+#include "coop/props/prop_drive_stream.h"  // IsParked: the host's drive took a coasting prop
 #include "coop/props/trash_collect_sync.h"
 
 #include "ue_wrap/devices/atv.h"
@@ -30,6 +31,8 @@
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/types.h"
 #include "ue_wrap/actors/vitals.h"
+
+#include <windows.h>  // GetTickCount64: the coast's rest clock
 
 #include <cmath>
 #include <cstdint>
@@ -57,6 +60,24 @@ std::wstring g_lastHeldPartKey;
 // This peer's hold generation: a new one at every new-held edge, carried by each pose and closed by
 // the release, so a receiver can tell a late pose of an ended hold from the next hold. Wraps, skips 0.
 uint16_t g_holdGen = 0;
+ue_wrap::CachedObjRef g_localPlayer;
+
+// The coast: a prop this peer let go of while it still moved. Its last toucher streams it, under the hold's
+// own generation and marked kPoseCoast, until it rests, and only then sends the release, with the pose it
+// rested at, so every copy comes to rest where this one did. Another player's grab or a new hold of this
+// player's ends it early, and so does a cap on its length.
+struct Coast {
+    ue_wrap::CachedObjRef ref;
+    coop::net::WireKey key{};
+    uint32_t eid = 0;
+    uint16_t holdGen = 0;
+    uint64_t startMs = 0, stillSinceMs = 0;
+};
+Coast g_coast;
+constexpr float    kCoastStillCmS  = 3.f;     // slower than this, and turning slower than kCoastStillDegS,
+constexpr float    kCoastStillDegS = 6.f;
+constexpr uint64_t kCoastRestMs    = 400;     // for this long, is at rest
+constexpr uint64_t kCoastMaxMs     = 20000;   // a coast never streams longer than this
 uint64_t g_propEmitCount = 0;
 
 // The ragdoll-physics edge state, file scope for the same reason; cleared by OnSessionStart.
@@ -192,6 +213,8 @@ void NotifyPropEidRebound(void* actor) {
 
 uint16_t CurrentHoldGen() { return g_holdGen; }
 
+void* LocalPlayer() { return g_localPlayer.Get(); }
+
 void* LastHeldActor() {
     // The local player's held actor, or null, for the trash channel's rest exclusion; live-guarded
     // so a stale pointer never aliases a recycled address.
@@ -204,6 +227,7 @@ void OnSessionStart() {
     g_lastHeldEid = coop::element::kInvalidId;
     g_lastHeldIsPart = false;
     g_lastHeldPartKey.clear();
+    g_coast = Coast{};
     g_propEmitCount = 0;
     g_wasRagdolling = false;
     g_ragdollEmitCount = 0;
@@ -212,8 +236,86 @@ void OnSessionStart() {
     g_gapLoggedEid = coop::element::kInvalidId;
 }
 
+namespace {
+
+ue_wrap::prop::VelocityState ReadVelocity(void* actor) {
+    ue_wrap::prop::VelocityState vel{};
+    if (!actor) return vel;
+    vel = ue_wrap::prop::GetPhysicsVelocity(actor);
+    if (!vel.ok) {
+        ue_wrap::FVector lin{}, ang{};
+        if (ue_wrap::engine::GetActorRootPhysicsVelocity(actor, lin, ang)) {
+            vel.linearCmS = lin; vel.angularDegS = ang; vel.ok = true;
+        }
+    }
+    return vel;
+}
+
+float Mag(const ue_wrap::FVector& v) { return std::sqrt(v.X * v.X + v.Y * v.Y + v.Z * v.Z); }
+
+// The coast is over: the release goes out with the pose and the velocity the prop has now -- at rest, none.
+void EndCoast(coop::net::Session& session, const char* why) {
+    void* actor = g_coast.ref.Get();
+    coop::net::PropReleasePayload rel{};
+    rel.key = g_coast.key;
+    rel.elementId = g_coast.eid;
+    rel.holdGen = g_coast.holdGen;
+    if (actor) {
+        const ue_wrap::prop::VelocityState vel = ReadVelocity(actor);
+        rel.linVelX = vel.linearCmS.X; rel.linVelY = vel.linearCmS.Y; rel.linVelZ = vel.linearCmS.Z;
+        rel.angVelX = vel.angularDegS.X; rel.angVelY = vel.angularDegS.Y; rel.angVelZ = vel.angularDegS.Z;
+        rel.physFlags = coop::prop_wire_parity::PhysFlagsOf(actor);
+        ue_wrap::FVector loc{};
+        ue_wrap::FRotator rot{};
+        if (ue_wrap::engine::TryGetActorLocation(actor, loc) && ue_wrap::engine::TryGetActorRotation(actor, rot)) {
+            rel.locX = loc.X; rel.locY = loc.Y; rel.locZ = loc.Z;
+            rel.rotPitch = rot.Pitch; rel.rotYaw = rot.Yaw; rel.rotRoll = rot.Roll;
+            rel.hasPose = 1;
+        }
+    }
+    session.SetLocalPropPose(false, {});
+    session.SendPropRelease(rel);
+    UE_LOGI("net: coast of hold %u ends (%s) after %llu ms -- release sent%s", static_cast<unsigned>(g_coast.holdGen),
+            why, static_cast<unsigned long long>(static_cast<uint64_t>(::GetTickCount64()) - g_coast.startMs),
+            rel.hasPose ? " with the pose it ended at" : "");
+    g_coast = Coast{};
+}
+
+// One coast tick: stream the pose while it moves, end it at rest, at the cap, or when another hand has it.
+void StepCoast(coop::net::Session& session) {
+    void* actor = g_coast.ref.Get();
+    if (!actor) { EndCoast(session, "the prop is gone"); return; }
+    if (coop::remote_prop::IsActorUnderAnyDrive(actor) || coop::prop_drive_stream::IsParked(actor)) {
+        EndCoast(session, "another player has it");
+        return;
+    }
+    const uint64_t now = static_cast<uint64_t>(::GetTickCount64());
+    const ue_wrap::prop::VelocityState vel = ReadVelocity(actor);
+    const bool still = vel.ok && Mag(vel.linearCmS) < kCoastStillCmS && Mag(vel.angularDegS) < kCoastStillDegS;
+    if (!still) g_coast.stillSinceMs = 0;
+    else if (!g_coast.stillSinceMs) g_coast.stillSinceMs = now;
+    if (g_coast.stillSinceMs && now - g_coast.stillSinceMs >= kCoastRestMs) { EndCoast(session, "at rest"); return; }
+    if (now - g_coast.startMs >= kCoastMaxMs) { EndCoast(session, "the cap"); return; }
+    ue_wrap::FVector loc{};
+    ue_wrap::FRotator rot{};
+    if (!ue_wrap::engine::TryGetActorLocation(actor, loc) || !ue_wrap::engine::TryGetActorRotation(actor, rot)) return;
+    coop::net::PropPoseSnapshot pp{};
+    pp.key = g_coast.key;
+    pp.elementId = g_coast.eid;
+    pp.holdGen = g_coast.holdGen;
+    pp.flags = coop::net::kPoseCoast;
+    pp.x = loc.X; pp.y = loc.Y; pp.z = loc.Z;
+    pp.pitch = ue_wrap::NormalizeAxis(rot.Pitch);
+    pp.yaw   = ue_wrap::NormalizeAxis(rot.Yaw);
+    pp.roll  = ue_wrap::NormalizeAxis(rot.Roll);
+    session.SetLocalPropPose(true, pp);
+}
+
+}  // namespace
+
 void Tick(coop::net::Session& session, void* local, void* controller) {
     namespace PP = coop::dev::perf_probe;
+    if (local && R::IsLive(local)) g_localPlayer.Set(local);
     coop::net::PoseSnapshot mine;
     { PP::Scope _s{PP::Bucket::LocalSend};
       if (ReadLocalPose(local, controller, mine)) {
@@ -291,6 +393,12 @@ void Tick(coop::net::Session& session, void* local, void* controller) {
                     coop::trash_channel::IsCarrying(g_lastHeldEid) ? 1 : 0,
                     (heldActor && hLive) ? "MAIN(pose)" : (g_lastHeldProp.Raw() ? "RELEASE-EDGE" : "idle"));
         }
+    }
+    // A coast in progress: a new hold of this player's ends it first, so its release goes out before the new
+    // hold's poses; otherwise it streams on.
+    if (g_coast.ref.Raw()) {
+        if (heldActor && R::IsLive(heldActor)) EndCoast(session, "a new hold");
+        else StepCoast(session);
     }
     if (heldActor && R::IsLive(heldActor)) {
         // The held item: an Aprop_C carries a force-minted key; the non-keyable trash clump rides
@@ -571,18 +679,30 @@ void Tick(coop::net::Session& session, void* local, void* controller) {
                 }
             }
             // A part with no portable key streamed no pose, so its let-go names nothing a receiver holds.
-            if (!g_lastHeldIsPart || !g_lastHeldPartKey.empty()) session.SendPropRelease(rel);
-            // The host owns everything at rest, and a let-go prop lands by each peer's own physics
-            // from the same transform and velocity, so the copies come to rest apart (docs/props.md,
-            // Known limits). The host's own release hands the prop to the driven-prop channel, which
-            // streams the host's copy until it rests and ends with its pose, so every receiver
-            // settles where the host's copy did. Only a prop still simulating: one a slot, a mount
-            // or the toolgun left frozen has nothing to converge. A client's release is not
-            // streamed: its own copy flies on its machine, and a stream would replace the flight
-            // its thrower is watching.
-            // A part with no wire identity of its own -- a fridge door, a swinging flap, both parent-owned --
-            // has no stream to ride, and its parent's lane carries what it changes.
-            if (session.role() == coop::net::Role::Host && g_lastHeldProp.Alive() && relEid != 0 &&
+            const bool streamed = !g_lastHeldIsPart || !g_lastHeldPartKey.empty();
+            // The last toucher streams what it let go of until it rests: a client always, and the host for
+            // what the driven-prop channel cannot carry -- a part, which has no element id.
+            const bool coastHere = streamed && rel.hasPose && g_lastHeldProp.Alive() &&
+                                   (rel.physFlags & coop::net::propspawn_flags::kSimulatePhysics) != 0 &&
+                                   (session.role() == coop::net::Role::Client || relEid == 0);
+            if (coastHere) {
+                g_coast = Coast{};
+                g_coast.ref.Set(g_lastHeldProp.Raw());
+                g_coast.key = g_lastHeldKey;
+                g_coast.eid = relEid;
+                g_coast.holdGen = g_holdGen;
+                g_coast.startMs = static_cast<uint64_t>(::GetTickCount64());
+                UE_LOGI("net: hold %u let go moving -- this peer streams it until it rests",
+                        static_cast<unsigned>(g_holdGen));
+            } else if (streamed) {
+                session.SendPropRelease(rel);
+            }
+            // A let-go prop would land by each peer's own physics from the same transform and velocity,
+            // so the copies came to rest apart. The host's own release of a prop with an element id hands
+            // it to the driven-prop channel instead, which streams the host's copy until it rests and ends
+            // with its pose; every other let-go coasts above. Only a prop still simulating: one a slot, a
+            // mount or the toolgun left frozen has nothing to converge.
+            if (!coastHere && session.role() == coop::net::Role::Host && g_lastHeldProp.Alive() && relEid != 0 &&
                 (rel.physFlags & coop::net::propspawn_flags::kSimulatePhysics) != 0) {
                 coastActor = g_lastHeldProp.Raw();
             }

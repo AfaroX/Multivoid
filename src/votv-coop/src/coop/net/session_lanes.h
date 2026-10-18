@@ -71,6 +71,7 @@ inline Lane LaneForKind(ReliableKind k) {
     case ReliableKind::PropSaveDataIntent: return Lane::Bulk;
     // A cord's plug rides it too: a plug on an item spawned a moment before must not pass its birth.
     case ReliableKind::CordPlug:           return Lane::Bulk;
+    case ReliableKind::PropToolFlags:      return Lane::Bulk;  // and a toolgun's flags, for the same reason
     // A device slot rides the same lane for the same reason: a peer's insert destroys the disc and
     // then reports the slot, and on another lane the report could pass the destroy. The laptop's
     // file quad follows its slot: a canonical or a batch must not pass the slot change that names

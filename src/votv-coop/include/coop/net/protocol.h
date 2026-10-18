@@ -1020,11 +1020,19 @@ enum class ReliableKind : uint8_t {
     // BlobChunkPayload, head [u8 op]. Never relayed. Late join: every playing device at world-ready.
     MediaPlay = 178,
 
-    // An item's power cord went into an outlet or came out of one (coop/props/cord_sync). Either peer
-    // to the host, the host to all: the item by key, the outlet by its portable key and location.
+    // An item's power cord went into an outlet or came out of one, or its head moves in a player's hand
+    // (coop/props/cord_sync). Either peer to the host, the host to all: the item by key, the outlet by its
+    // portable key and location, a dragged head by its world pose at about 15 Hz.
     // Relayed by the host after it applies it. Late join: every corded item's cord at world-ready.
     // Trust: the receiver runs the game's own connect and disconnect on its copy. CordPlugPayload.
     CordPlug = 179,
+
+    // A toolgun's prop-properties tool set a prop's static, frozen, active and sleeping flags
+    // (coop/props/prop_tool_flags). Either peer to the host, the host to all: the prop, its flags and its
+    // pose at that moment, so every copy holds still in the same place. Relayed by the host after it
+    // applies it. Late join: the flags reach a joiner with the prop's snapshot row and its save.
+    // PropToolFlagsPayload.
+    PropToolFlags = 180,
 };
 
 #pragma pack(push, 1)
@@ -1184,10 +1192,11 @@ struct PropPoseSnapshot {
     // the settled pile. 0 = no enforcement (a keyed prop). In a PropDrivePose batch the same byte is
     // the claim generation, which PropDriveEnd closes.
     uint8_t  ctx;
-    uint8_t  _pad;
+    uint8_t  flags;     // kPoseCoast: no hand holds it any more; its last toucher streams it until it rests
     uint16_t holdGen;   // the holder's hold generation, wrapping, never 0; 0 in a PropDrivePose batch
 };
 static_assert(sizeof(PropPoseSnapshot) == 64, "PropPoseSnapshot must be 64 bytes");
+inline constexpr uint8_t kPoseCoast = 0x01;
 
 struct PropPosePacket {
     PacketHeader     header;  // 20
@@ -1903,12 +1912,25 @@ static_assert(sizeof(FireExtRupturePayload) == 40, "FireExtRupturePayload must b
 struct CordPlugPayload {
     WireKey  item;        // 32 -- the corded item's save Key; len=0 -> resolve by eid
     uint32_t elementId;   // 4  -- its Element id, 0 = none
-    uint8_t  plugged;     // 1  -- 1 = into `socket`, 0 = out
+    uint8_t  plugged;     // 1  -- 1 = into `socket`, 0 = out, 2 = out and dragged, its head at s* / h*
     uint8_t  _pad[3];     // 3  -- zeroed
-    WireKey  socket;      // 32 -- the outlet's portable key; len=0 when unplugged
-    float    sx, sy, sz;  // 12 -- the outlet's world location
+    WireKey  socket;      // 32 -- the outlet's portable key; len=0 when not plugged
+    float    sx, sy, sz;  // 12 -- the outlet's world location, or a dragged head's
+    float    hp, hy, hr;  // 12 -- a dragged head's world rotation; zero otherwise
 };
-static_assert(sizeof(CordPlugPayload) == 84, "CordPlugPayload must be 84 bytes");
+static_assert(sizeof(CordPlugPayload) == 96, "CordPlugPayload must be 96 bytes");
+
+// A toolgun's flag change on a prop (PropToolFlags): the prop by its wire key (a part's portable key or the
+// prop's Key), the eid as the keyless fallback; the four flags setPropProps takes and the pose they froze.
+struct PropToolFlagsPayload {
+    WireKey  key;                  // 32
+    uint32_t elementId;            // 4  -- 0 = none
+    uint8_t  flags;                // 1  -- bit 0 static, 1 frozen, 2 active, 3 sleeping
+    uint8_t  _pad[3];              // 3  -- zeroed
+    float    x, y, z;              // 12
+    float    pitch, yaw, roll;     // 12
+};
+static_assert(sizeof(PropToolFlagsPayload) == 64, "PropToolFlagsPayload must be 64 bytes");
 
 // A client player's hit on a prop (PropHitIntent): the prop by key, the eid as the keyless fallback, and the
 // swing's own addDamage arguments the host re-runs it with.

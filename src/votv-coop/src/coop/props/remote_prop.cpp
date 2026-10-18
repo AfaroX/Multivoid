@@ -19,8 +19,9 @@
 #include "coop/props/prop_park.h"  // Park / Unpark: a held prop, and a Character welded on it
 #include "coop/props/prop_echo_suppress.h"
 #include "coop/props/prop_element_tracker.h"
-#include "coop/props/prop_key_index.h"
-#include "coop/props/part_index.h"  // a parent's part streams under its portable key  // a key on the wire to a live actor
+#include "coop/props/prop_key_index.h"  // a key on the wire to a live actor
+#include "coop/props/part_index.h"  // a parent's part streams under its portable key
+#include "coop/player/local_streams.h"  // LastHeldActor, CurrentHoldGen, LocalPlayer: this peer's own hand
 #include "coop/props/prop_stick_sync.h"  // the stuck wall-attachable gates
 #include "coop/props/prop_wire_parity.h"  // ConvergeFrozenSleep, the release's flags
 #include "coop/props/unresolved_pose_ledger.h"  // a pose-before-spawn race vs a sustained identity gap
@@ -29,6 +30,7 @@
 #include "coop/interactables/drive_payload_sync.h"
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/engine/engine.h"
+#include "ue_wrap/engine/engine_mainplayer.h"  // ReleaseMainPlayerGrabIfHolding: the coin's loser lets go
 #include "ue_wrap/core/fname_utils.h"
 #include "ue_wrap/core/hot_path_guard.h"
 #include "ue_wrap/core/log.h"
@@ -43,6 +45,7 @@
 #include <mutex>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 namespace coop::remote_prop {
@@ -80,6 +83,9 @@ struct HoldGate {
     uint32_t relatches   = 0;      // re-latches during the drive, said at the first and at the loud mark
 };
 std::array<HoldGate, coop::players::kMaxPeers> g_holds{};
+// The slot's last pose was a coast (coop::net::kPoseCoast): no hand holds the prop, its last toucher streams
+// it to rest. A hand -- any player's -- takes a coasting prop over.
+std::array<bool, coop::players::kMaxPeers> g_slotCoast{};
 
 // Wrapping order: `a` was minted after `b`.
 bool GenAfter(uint16_t a, uint16_t b) { return static_cast<int16_t>(a - b) > 0; }
@@ -165,6 +171,71 @@ bool StickHoldsPhysicsOff(void* actor) {
            (ue_wrap::prop::IsFrozen(actor) || ue_wrap::prop::IsStatic(actor));
 }
 
+// Two holds of one prop that began before either peer saw the other's: the same coin on every peer, from
+// what every peer knows alike -- the prop's key and both holds. The winner's slot.
+int CoinWinner(const coop::net::WireKey& key, int slotA, uint16_t genA, int slotB, uint16_t genB) {
+    if (slotA > slotB) { std::swap(slotA, slotB); std::swap(genA, genB); }
+    uint64_t h = 0xcbf29ce484222325ULL;
+    auto mix = [&h](uint8_t b) { h ^= b; h *= 0x100000001b3ULL; };
+    for (uint8_t i = 0; i < key.len && i < 31; ++i) mix(static_cast<uint8_t>(key.data[i]));
+    mix(static_cast<uint8_t>(slotA)); mix(static_cast<uint8_t>(genA)); mix(static_cast<uint8_t>(genA >> 8));
+    mix(static_cast<uint8_t>(slotB)); mix(static_cast<uint8_t>(genB)); mix(static_cast<uint8_t>(genB >> 8));
+    return ((h >> 17) & 1) ? slotB : slotA;
+}
+
+// A slot's drive gives the prop up to another owner: it moves nothing more, and its hold is closed here,
+// so its later poses and its release change nothing. `physicsBack` hands this copy's body back to its own
+// simulation, for this player's own hand.
+void YieldSlot(int s, bool physicsBack) {
+    ActiveDrive& d = g_drives[s];
+    void* a = d.LiveActor();
+    if (physicsBack && a) coop::prop_park::Unpark(a, d.mesh, !StickHoldsPhysicsOff(a));
+    if (d.actor) ResetDriveState(d);
+    CloseHold(s, g_holds[s].driveGen);
+    g_slotCoast[s] = false;
+}
+
+// Who moves `prop`, which slot `slot`'s pose names: a hand beats a coast, and of two hands the coin picks.
+// False when this pose must not drive it here. Game thread.
+bool TakeFromOthers(int slot, const coop::net::PropPoseSnapshot& pose, void* prop) {
+    const bool coast = (pose.flags & coop::net::kPoseCoast) != 0;
+    HoldGate& hold = g_holds[slot];
+    if (prop == coop::local_streams::LastHeldActor()) {
+        if (coast) {
+            // This player took what the other was coasting: the coaster sees this hand and stops.
+            CloseHold(slot, pose.holdGen);
+            return false;
+        }
+        const int me = static_cast<int>(coop::players::Registry::Get().LocalPeerId());
+        const int winner = CoinWinner(pose.key, me, coop::local_streams::CurrentHoldGen(), slot, pose.holdGen);
+        if (winner == me) {
+            if (hold.refusedGen != pose.holdGen) {
+                hold.refusedGen = pose.holdGen;
+                UE_LOGI("remote_prop: slot %d hold %u grabbed the prop this player holds at the same moment -- "
+                        "the coin keeps it here", slot, static_cast<unsigned>(pose.holdGen));
+            }
+            return false;
+        }
+        void* local = coop::local_streams::LocalPlayer();
+        const bool dropped = local && ue_wrap::engine::ReleaseMainPlayerGrabIfHolding(local, prop);
+        UE_LOGI("remote_prop: slot %d hold %u grabbed the prop this player holds at the same moment -- the coin "
+                "gives it to them%s", slot, static_cast<unsigned>(pose.holdGen), dropped ? "; let go here" : "");
+        return true;
+    }
+    for (int s = 0; s < static_cast<int>(coop::players::kMaxPeers); ++s) {
+        if (s == slot || g_drives[s].LiveActor() != prop) continue;
+        if (g_slotCoast[s]) {
+            YieldSlot(s, /*physicsBack=*/false);   // this pose's drive parks it next
+            continue;
+        }
+        if (coast) return false;   // a hand already has it; the coaster sees that and stops
+        const int winner = CoinWinner(pose.key, s, g_holds[s].driveGen, slot, pose.holdGen);
+        if (winner == s) return false;
+        YieldSlot(s, /*physicsBack=*/false);
+    }
+    return true;
+}
+
 void ResolveAndStartDrive(int slot, const coop::net::PropPoseSnapshot& pose) {
     // A trash carry pose is held unless its ctx is the entity's current generation: a pose ahead of
     // its convert would drive the pre-convert rendering, a stale one after a re-pile or throw would
@@ -212,6 +283,7 @@ void ResolveAndStartDrive(int slot, const coop::net::PropPoseSnapshot& pose) {
         return;
     }
     coop::unresolved_pose_ledger::Clear(slot, keyW, pose.elementId);
+    if (!TakeFromOthers(slot, pose, prop)) return;
     // The half of the grab this peer never ran. A grab runs its prelude on the grabbing machine only:
     // prop_C's playerGrabbed_pre clears the prop's lifespan, broadcasts `touched` and runs
     // awakeUnfreeze on a frozen or sleeping prop, and a prop carrying the wall-attach component (the
@@ -295,6 +367,19 @@ void ResolveAndStartDrive(int slot, const coop::net::PropPoseSnapshot& pose) {
 
 }  // namespace
 
+bool YieldCoastForGrab(void* actor) {
+    UE_ASSERT_GAME_THREAD("g_drives (YieldCoastForGrab)");
+    if (!actor) return false;
+    for (int s = 0; s < static_cast<int>(coop::players::kMaxPeers); ++s) {
+        if (!g_slotCoast[s] || g_drives[s].LiveActor() != actor) continue;
+        UE_LOGI("remote_prop: this player reaches for what slot %d coasts (hold %u) -- physics back for the grab", s,
+                static_cast<unsigned>(g_holds[s].driveGen));
+        YieldSlot(s, /*physicsBack=*/true);
+        return true;
+    }
+    return false;
+}
+
 void Tick(coop::net::Session& session) {
     // Every game-thread tick, from net_pump::Tick.
     UE_ASSERT_GAME_THREAD("g_drives (remote_prop::Tick)");
@@ -350,10 +435,20 @@ void Tick(coop::net::Session& session) {
                 if (drive.actor) ResetDriveState(drive);
                 ResolveAndStartDrive(slot, pose);
             }
+            g_slotCoast[slot] = (pose.flags & coop::net::kPoseCoast) != 0;
+            if (g_slotCoast[slot] && drive.LiveActor() && drive.LiveActor() == coop::local_streams::LastHeldActor()) {
+                // This player grabbed what the slot was coasting: the hand has it from here.
+                UE_LOGI("remote_prop: slot %d's coast of hold %u ends here -- this player's hand has the prop", slot,
+                        static_cast<unsigned>(pose.holdGen));
+                YieldSlot(slot, /*physicsBack=*/true);
+            }
             if (drive.LiveActor()) {
-                // The pose is the new lerp target; AdvanceLerp moves the actor toward it each tick.
+                // The pose is the new lerp target; AdvanceLerp moves the actor toward it each tick. A held prop's
+                // copy moves, carrying what rests on it; a coasting one is placed at each pose, so a body no
+                // hand holds pushes nothing here with no end of mass.
                 BeginLerpToPose(drive, ue_wrap::FVector{pose.x, pose.y, pose.z},
-                                ue_wrap::FRotator{pose.pitch, pose.yaw, pose.roll}, nowMs, /*carry=*/true);
+                                ue_wrap::FRotator{pose.pitch, pose.yaw, pose.roll}, nowMs,
+                                /*carry=*/!g_slotCoast[slot]);
                 drive.lastApplyMs = nowMs;
                 // The first 3 and every 60th target per slot.
                 static std::array<uint64_t, coop::players::kMaxPeers> sApplyCount{};

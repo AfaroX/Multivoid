@@ -144,6 +144,7 @@
 #include "coop/media/media_frames.h"
 #include "coop/props/cord_sync.h"
 #include "coop/props/part_index.h"
+#include "coop/props/prop_tool_flags.h"
 #include "coop/media/media_playback.h"
 #include "coop/media/media_pool.h"
 #include "coop/props/record_sync.h"
@@ -257,6 +258,7 @@ void Install(coop::net::Session& session) {
     coop::media_frames::Install(&session);     // a frame's or a poster's chosen image on every screen
     coop::media_playback::Install(&session);   // a TV or a radio plays the host's link at the host's point
     coop::cord_sync::Install(&session);        // an item's cord is in the same outlet on every screen
+    coop::prop_tool_flags::Install(&session);  // a toolgun freeze holds the prop at one pose everywhere
     coop::props::prop_food_state::Install();  // the food family claims its own live state off the record lane
     coop::desk_cursor_sync::Install(&session);  // coords-panel live-cursor unreliable motion stream (interpolated mirror)
     coop::desk_input_sync::Install(&session);  // the claim-free field-granular desk input lane
@@ -693,7 +695,7 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:device_occupancy"}; coop::device_occupancy::Tick(); }  // device occupancy: activeInterface edge poll + pending claim retry
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:console_state"}; coop::console_state_sync::Tick(); }  // signal-catcher: host sky poll / client mirror sweep / desk + dish owner streams
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:signal_catch"}; coop::signal_catch_sync::Tick(); }  // the catch and cleared detectors, 1 Hz
-    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:propsave"}; coop::prop_save_data::Drive(); coop::props::record_sync::Tick(); coop::props::knock_stream::Tick(); coop::props::prop_hit_authority::Tick(); coop::media_pool::Tick(); coop::media_frames::Tick(); coop::media_playback::Tick(); coop::cord_sync::Tick(); }  // budgeted park applies; records sent on change + the 1 Hz assembler sweep
+    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:propsave"}; coop::prop_save_data::Drive(); coop::props::record_sync::Tick(); coop::props::knock_stream::Tick(); coop::props::prop_hit_authority::Tick(); coop::media_pool::Tick(); coop::media_frames::Tick(); coop::media_playback::Tick(); coop::cord_sync::Tick(); coop::prop_tool_flags::Tick(); }  // budgeted park applies; records sent on change + the 1 Hz assembler sweep
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:laptop"}; coop::laptop_sync::Tick(); }  // PC power edge poll (4 Hz)
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:pc_lid"}; coop::portable_pc_lid::Tick(); }  // the lid's watch until live, then waiting lines and held edges (1 Hz while any)
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:laptop_quad"}; coop::laptop_buffer_sync::Tick(); }  // quad int pre-filter poll (4 Hz)
