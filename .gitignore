@@ -272,6 +272,7 @@ docs/**
 !docs/signals.md
 !docs/testing.md
 !docs/ui.md
+!docs/media.md
 !docs/vehicles.md
 !docs/versioning.md
 !docs/voice-and-chat.md
