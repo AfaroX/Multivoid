@@ -290,6 +290,10 @@ bool EnsureHeldItemBroadcast(void* heldActor, coop::net::Session* s) {
         UE_LOGI("[ROCK-DROP] EnsureHeldItemBroadcast DECLINE (tracker-known): cls='%ls' key='%ls' eid=%u "
                 "-- 'pose stream suffices' assumes an active stream; false if the prop is no longer held",
                 R::ClassNameOf(heldActor).c_str(), keyStr.c_str(), static_cast<unsigned>(trackedEid));
+        // The peer has the prop, but not always its state: a prop the host took out of a pocket is
+        // expressed at its init, before the game fills it in, so the host's hand sends what it holds.
+        // A client's copy is never the truth here, so only the host does.
+        if (s->role() == coop::net::Role::Host) coop::prop_save_data::Publish(s, heldActor, keyStr);
         return false;  // keyed AND tracker-known: the peer has it; pose stream suffices
     }
 

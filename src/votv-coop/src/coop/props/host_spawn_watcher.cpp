@@ -242,14 +242,15 @@ void OnFinishSpawnFunc(void* /*context*/, void* /*srcObj*/, void* result) {
     // expressing a mirror as a fresh world prop is the dupe.
     if (coop::prop_echo_suppress::IsMirrorSpawn(actor)) return;
     if (!ue_wrap::prop::IsDescendantOfProp(actor)) return;  // KEYED Aprop_C lineage only
-    // An actor the init seam already tracked has its row out; only a fall and a container's contents
-    // are left to give it, so it is queued when it can fall (a spawn-menu barrel takes that route) or
+    // An actor the init seam already tracked has its row out; its record, a fall and a container's
+    // contents are left to give it, so it is queued when it has save state of its own (a disc put back
+    // from a pocket is filled in after this call), can fall (a spawn-menu barrel takes that route) or
     // is a container (a thrown one is rebound to its slot by its own loadData, and no verb marks it),
     // and dropped here otherwise, which keeps every other tracked birth out of the queue and its cap.
     const bool tracked = PT::GetPropElementIdForActor(actor) != coop::element::kInvalidId;
     if (tracked &&
         !(coop::prop_wire_parity::PhysFlagsOf(actor) & coop::net::propspawn_flags::kSimulatePhysics) &&
-        !ue_wrap::container_inventory::IsContainer(actor))
+        !ue_wrap::container_inventory::IsContainer(actor) && !coop::prop_save_data::Covers(actor))
         return;
     if (g_pendingFinished.size() >= kMaxPendingFinished) {
         UE_LOGW("host_spawn_watcher: pending-finished cap %zu hit -- dropping %p (%s)", kMaxPendingFinished,
@@ -426,8 +427,12 @@ void DrainPendingSpawns(coop::net::Session* s) {
         // world. Never adopted here.
         if (e.actor == coop::hand_item::LocalHandActor()) continue;
         // Tracked since the enqueue (the init seam expressed it first): someone owns its row, and
-        // only its fall and a container's contents are left to give it.
+        // its record, its fall and a container's contents are left to give it. The init seam sends no
+        // record, since it runs before the birth fills the prop in; without this one a disc the host
+        // took out of a pocket reached every client blank, and the client's next insert or drop of
+        // that blank copy wiped the host's.
         if (coop::element::Registry::Get().EidForActor(e.actor) != coop::element::kInvalidId) {
+            coop::prop_save_data::PublishHostBirth(s, e.actor);
             coop::props::container_birth::NoteHostBirth(e.actor);
             CoastIfFalling(e.actor);
             continue;
