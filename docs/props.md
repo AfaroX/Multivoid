@@ -232,7 +232,9 @@ own physics and rested apart. Every prop carries `comp_physicsImpact`, whose con
 the component's `hitCpp`; on the host, after it runs, a prop now simulating faster than 5 cm/s is put
 on the driven-prop channel, which streams it until it rests and ends with the host's pose
 (`coop/props/knock_stream`). A carried prop's copy moves rather than teleports on every peer, so what a
-client's carried prop pushes over on the host streams the same way.
+client's carried prop pushes over on the host streams the same way. A streamed knocked prop's copy is
+placed at each pose instead: moving, a kinematic copy pushes as if it had no end of mass, and one slid
+under a table threw the table across one screen while the host's stood still.
 
 ### Who answers a hit
 
