@@ -29,6 +29,13 @@ inline constexpr size_t kNickBufBytes = kNickMaxBytes + 1;
 // control codepoints are dropped.
 std::string ToUtf8(const std::wstring& w);
 
+// The same encoding with every codepoint kept, C0 controls included, for the game's own data that
+// rides the wire: a disc's rows, a laptop's files, a slot's save JSON. A hash code a satellite writes
+// is lines joined by CR LF, and the drone's sale splits it on them to read the satellite's name, so
+// ToUtf8's filter -- right for a line a person reads -- made every code the laptop carried count for
+// nothing. Only an unpaired surrogate, which is not a character, is dropped.
+std::string ToUtf8Exact(const std::wstring& w);
+
 // UTF-8 -> UTF-16, STRICT. Returns false and leaves `out` untouched when the
 // input is not well-formed UTF-8 (MB_ERR_INVALID_CHARS): the caller then shows a
 // placeholder rather than a repaired string. Empty input is well-formed.

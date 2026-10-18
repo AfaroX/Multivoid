@@ -146,6 +146,11 @@ from the host's finish-spawning drain, since the eject fills the disc in after t
 init announces before the game fills it in, and the host sends a disc's record again whenever it takes
 one in hand: a client left with a blank copy once wiped the host's disc with its next insert or drop.
 
+A disc's rows, a laptop's files and a slot's save JSON cross exactly as the game holds them, line
+breaks included (`coop::text::ToUtf8Exact`): a hash code is lines joined by CR LF, and the drone's
+sale splits it on them to read the satellite's name, so the filter a chat line needs made every code
+the laptop carried count for nothing.
+
 The laptop's slot crosses as one blob, and the save JSON carries the rows a second time, so a disc
 with a few dozen rows is kilobytes. The blob is held to the ceiling the server slot uses and refused
 whole past it, never cut: a cut JSON is one the receiver's own eject cannot parse, and the disc it

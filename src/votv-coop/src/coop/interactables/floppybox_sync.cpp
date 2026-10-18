@@ -3,7 +3,7 @@
 #include "coop/props/prop_save_data.h"
 #include "coop/interactables/floppybox_sync.h"
 
-#include "coop/comms/chat_feed.h"  // ToUtf8
+#include "coop/text/utf8_codec.h"  // ToUtf8Exact: a row keeps its line breaks
 #include "coop/element/registry.h"
 #include "coop/net/blob_chunks.h"
 #include "coop/net/session.h"
@@ -53,7 +53,7 @@ std::wstring FromUtf8(const std::string& s) {
 }
 
 uint64_t HashStr(const std::wstring& w) {
-    const std::string u = coop::chat_feed::ToUtf8(w);
+    const std::string u = coop::text::ToUtf8Exact(w);
     return coop::blob_chunks::Fnv64(reinterpret_cast<const uint8_t*>(u.data()), u.size());
 }
 
@@ -71,7 +71,7 @@ void PutU64(std::vector<uint8_t>& b, uint64_t v) {
     for (int i = 0; i < 8; ++i) b.push_back(static_cast<uint8_t>((v >> (i * 8)) & 0xFF));
 }
 void PutStr(std::vector<uint8_t>& b, const std::wstring& w) {
-    std::string u = coop::chat_feed::ToUtf8(w);
+    std::string u = coop::text::ToUtf8Exact(w);
     if (u.size() > 0xFFFF) u.resize(0xFFFF);
     PutU16(b, static_cast<uint16_t>(u.size()));
     b.insert(b.end(), u.begin(), u.end());
