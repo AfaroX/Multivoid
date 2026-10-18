@@ -351,7 +351,7 @@ void NoteSeenGen(uint32_t eid, uint8_t gen) {
     else if (GenAfter(gen, it->second)) it->second = gen;
 }
 
-void Yield(uint32_t eid) {
+void GiveUp(uint32_t eid) {
     for (Driven& d : g_driven) {
         if (d.dead || d.eid != eid) continue;
         d.dead = true;

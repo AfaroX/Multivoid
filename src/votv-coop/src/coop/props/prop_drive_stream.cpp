@@ -122,7 +122,7 @@ bool TheirsWins(uint32_t eid, uint8_t gen, int owner, int me) {
     uint8_t mine = 0;
     if (!coop::prop_drive_host::Owns(eid, &mine)) return true;
     const bool theirs = GenAfter(gen, mine) || (gen == mine && CoinOwner(eid, me, owner) == owner);
-    if (theirs) coop::prop_drive_host::Yield(eid);
+    if (theirs) coop::prop_drive_host::GiveUp(eid);
     else AdvanceGen(g_endedGen, eid, gen);
     return theirs;
 }
@@ -391,7 +391,7 @@ void OnEnd(const coop::net::PropDriveEndPayload& p, int senderSlot) {
         AdvanceGen(g_endedGen, p.eid, p.gen);
         return;
     }
-    if (coop::prop_drive_host::Owns(p.eid)) coop::prop_drive_host::Yield(p.eid);
+    if (coop::prop_drive_host::Owns(p.eid)) coop::prop_drive_host::GiveUp(p.eid);
     auto it = g_drives.find(p.eid);
     // Of two claims under one generation that crossed, the coin's loser's end closes nothing.
     if (it != g_drives.end() && !it->second.placeholder && it->second.gen == p.gen && it->second.owner >= 0 &&

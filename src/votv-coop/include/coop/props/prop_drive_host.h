@@ -65,7 +65,7 @@ void NoteSeenGen(uint32_t eid, uint8_t gen);
 
 // Another peer's newer stream took `eid`: this peer's row stops, sending no end -- the new owner's ends
 // it. Game thread.
-void Yield(uint32_t eid);
+void GiveUp(uint32_t eid);
 
 // Session end. Game thread.
 void OnDisconnect();
