@@ -578,7 +578,7 @@ void OnChunk(const coop::net::BlobChunkPayload& p, uint8_t senderSlot) {
             if (!r.ok || key.empty()) break;
             Dev* d = DevFor(key);
             if (!d) continue;
-            g_maxSeq = std::max(g_maxSeq, st.openSeq);
+            g_maxSeq = (std::max)(g_maxSeq, st.openSeq);
             if (host) {
                 // Only the owner speaks for a device; the host's own owner and holder stand.
                 if (d->owner != senderSlot) continue;
