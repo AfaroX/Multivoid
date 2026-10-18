@@ -143,6 +143,7 @@
 #include "coop/props/prop_hit_authority.h"
 #include "coop/media/media_frames.h"
 #include "coop/props/cord_sync.h"
+#include "coop/props/part_index.h"
 #include "coop/media/media_playback.h"
 #include "coop/media/media_pool.h"
 #include "coop/props/record_sync.h"
@@ -576,6 +577,7 @@ DisconnectStats DisconnectAll() {
     coop::media_pool::OnDisconnect();
     coop::media_playback::OnDisconnect();
     coop::cord_sync::OnDisconnect();
+    coop::part_index::OnDisconnect();
     coop::laptop_sync::OnDisconnect();
     coop::portable_pc_lid::OnDisconnect();
     coop::laptop_buffer_sync::OnDisconnect();  // quad shadow + assembler

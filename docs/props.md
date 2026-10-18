@@ -160,8 +160,11 @@ While a prop is held, its holder owns it. The holder streams the held prop's wor
 frame, unreliable and newest-wins, under a generation it mints at the grab
 (`coop/player/local_streams`). A receiver resolves the prop by key, turns its physics off, and
 goes to each pose as it arrives (`coop/props/remote_prop`, `coop/props/active_drive`). A part its
-parent spawns on every peer, such as a fridge's door, has no identity of its own and is not streamed:
-its parent's state carries what the part changes. The first pose
+parent spawns on every peer -- a cupboard's, a fridge's or a microwave's door (`prop_swinger_C` and its
+kin) -- has a Key each process mints for itself, so it streams under its portable key instead, the
+parent's key and its component's name, which every peer computes alike (`coop/props/part_index`). A
+door's swing reaches every screen that way, and its release lets it swing on from there. A part with no
+portable key is not streamed and is never announced as a prop. The first pose
 of a hold and a jump past 5 m place the copy; the steady stream moves it, a kinematic move rather than
 a teleport, so the parked body has the frame's velocity and carries what rests on or in it. A stack
 in a carried bucket is kept by plain physics on the carrier's machine -- an open container glues
@@ -406,6 +409,7 @@ holds that for twenty seconds against the save's delayed reconnect.
 | a client's intents | `coop/props/prop_drop_intent` |
 | the stick | `coop/props/prop_stick_sync` |
 | power cords | `coop/props/cord_sync` |
+| a parent's parts, by their portable key | `coop/props/part_index` |
 | a prop under a hook's drive or a broom's push | `coop/props/prop_drive_host` (the host's set and stream), `coop/props/prop_drive_stream` (the receiver), `coop/items/hook_prop_claim` (the hook lane feeding it), `coop/items/hook_constraint` (the tie itself, host-only), `coop/items/broom_push` (the broom's push feeding it) |
 | containers | `coop/props/container_contents_sync`, `coop/items/save_record_wire`, `coop/interactables/interactable_sync` |
 | a record that changes in place | `coop/props/prop_record_refresh` (the drive box, the reel case) |
