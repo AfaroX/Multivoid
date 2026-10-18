@@ -151,7 +151,7 @@ int SendBacklog::Drain(int slot, uint32_t hConn, SendAdmission& adm) {
     bool progressed = false;
     bool blocked = false;
     int sentThisPass = 0;  // kDrainPassCap bounds the mutex hold
-    for (int lane = 0; lane < kLaneCount && !blocked; ++lane) {  // High -> Normal -> Bulk
+    for (int lane = 0; lane < kLaneCount && !blocked; ++lane) {  // High -> Normal -> Bulk -> Media
         LaneQ& l = s.lanes[lane];
         while (!l.q.empty()) {
             if (sentThisPass >= kDrainPassCap) { blocked = true; break; }

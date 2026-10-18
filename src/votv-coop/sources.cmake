@@ -107,6 +107,7 @@ set(VOTVCOOP_SOURCES
     src/ue_wrap/desk/tape_caddy.cpp
     src/ue_wrap/devices/floppy_slot.cpp
     src/ue_wrap/devices/laptop.cpp
+    src/ue_wrap/devices/media_device.cpp
     src/ue_wrap/devices/portable_pc.cpp
     src/ue_wrap/devices/floppybox.cpp
     src/ue_wrap/devices/serverbox.cpp
@@ -164,6 +165,7 @@ set(VOTVCOOP_SOURCES
     src/ue_wrap/actors/effects.cpp
     src/ue_wrap/world/game_mode.cpp
     src/ue_wrap/world/world_singleton.cpp
+    src/ue_wrap/world/custom_assets.cpp
     src/ue_wrap/world/world_instances.cpp
     src/ue_wrap/world/game_rules.cpp
     src/ue_wrap/world/upgrades.cpp
@@ -316,6 +318,9 @@ set(VOTVCOOP_SOURCES
     src/coop/props/record_sync.cpp
     src/coop/props/knock_stream.cpp
     src/coop/props/prop_hit_authority.cpp
+    src/coop/media/media_pool.cpp
+    src/coop/media/media_frames.cpp
+    src/coop/media/media_playback.cpp
     src/coop/props/prop_stick_sync.cpp
     src/coop/props/prop_synth_key.cpp
     src/coop/props/prop_fresh_spawn.cpp
@@ -527,6 +532,7 @@ set(VOTVCOOP_SOURCES
     src/ui/dev_menu.cpp
     src/ui/dev_panes.cpp
     src/ui/skins_panel.cpp
+    src/ui/media_panel.cpp
     src/ui/admin_panel.cpp
     src/ui/bug_report_pane.cpp
     src/ui/server_settings_pane.cpp

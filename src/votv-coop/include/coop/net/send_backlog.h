@@ -39,7 +39,7 @@ enum class SendOutcome : uint8_t {
 
 class SendBacklog {
 public:
-    static constexpr int kLaneCount = 3;  // pinned to Lane::Count (session.cpp static_assert)
+    static constexpr int kLaneCount = 4;  // pinned to Lane::Count (session.cpp static_assert)
 
     // Fatal-bound policy (queued-until-sent or CONNECTION-FATAL, never drop):
     //  - no-progress: backlog non-empty and NOTHING departed for this long. A

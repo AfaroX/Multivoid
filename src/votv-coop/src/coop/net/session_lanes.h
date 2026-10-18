@@ -9,13 +9,15 @@
 
 namespace coop::net {
 
-// The priority lanes. connection_tuning's TuneConnection hard-codes the count to 3, and
-// session.cpp pins the two together with a static_assert on Lane::Count.
+// The priority lanes. connection_tuning's TuneConnection hard-codes the count to 4, and
+// session.cpp pins the two together with a static_assert on Lane::Count. Media is below Bulk: a pooled
+// file's pieces go out only when no gameplay message waits, so a video never delays the world.
 enum class Lane : int {
     High = 0,
     Normal = 1,
     Bulk = 2,
-    Count = 3,
+    Media = 3,
+    Count = 4,
 };
 
 // The three admission kinds appear in none of the three routers below, and that is not an
@@ -104,6 +106,7 @@ inline Lane LaneForKind(ReliableKind k) {
     // after loading the save), so Bulk costs nothing, and Begin must precede its chunks in-lane.
     case ReliableKind::SaveTransferBegin: return Lane::Bulk;
     case ReliableKind::SaveTransferChunk: return Lane::Bulk;
+    case ReliableKind::MediaChunk:        return Lane::Media;
     // The host-to-client inventory blob must reach the joiner before its world loads (the inventory
     // is substituted before materialisation), so it rides Normal, ahead of the Bulk streams, and is
     // pre-world sendable; a self-contained blob with no in-lane dependency.

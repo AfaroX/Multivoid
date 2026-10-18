@@ -37,7 +37,7 @@ constexpr int kSendStaging = kMaxPacketBytes;
 // The lanes and the relayable-kind list live in session_lanes.h; Lane::Count is pinned to the
 // kLaneCount TuneConnection passes, or a fourth lane would flow through LaneForKind while
 // the connection still configured three.
-static_assert(static_cast<int>(Lane::Count) == 3,
+static_assert(static_cast<int>(Lane::Count) == 4,
               "Lane::Count changed -- update kLaneCount in connection_tuning.cpp::TuneConnection");
 
 }  // namespace
@@ -84,7 +84,8 @@ bool Session::SendReliableToSlot(int peerSlot, ReliableKind kind, const void* pa
     // The save-stream family is the pump's pacing lane and must not mix with the backlog (a
     // bypassing chunk would overtake a queued Begin in the same lane); the pump calls
     // TrySendReliableToSlot itself, and this routing keeps a stray caller correct.
-    if (kind == ReliableKind::SaveTransferBegin || kind == ReliableKind::SaveTransferChunk)
+    if (kind == ReliableKind::SaveTransferBegin || kind == ReliableKind::SaveTransferChunk ||
+        kind == ReliableKind::MediaChunk)
         return TrySendReliableToSlot(peerSlot, kind, payload, len, senderSlot);
     if (peerSlot < 0 || peerSlot >= kMaxPeers) return false;
     if (len < 0 || len > kMaxReliablePayload) {
@@ -118,7 +119,8 @@ bool Session::TrySendReliableToSlot(int peerSlot, ReliableKind kind, const void*
     // SaveTransferChunk is the one bulk kind: it bypasses the inbox on the receiver (the bulk
     // sink), so its bound is ReliableHeader.payloadLen's uint16; everything else keeps the
     // event-datagram cap.
-    const int cap = (kind == ReliableKind::SaveTransferChunk) ? 65000 : kMaxReliablePayload;
+    const int cap = (kind == ReliableKind::SaveTransferChunk || kind == ReliableKind::MediaChunk)
+                        ? 65000 : kMaxReliablePayload;
     if (len < 0 || len > cap) {
         UE_LOGW("net: TrySendReliableToSlot rejected (slot=%d len=%d > %d)",
                 peerSlot, len, cap);

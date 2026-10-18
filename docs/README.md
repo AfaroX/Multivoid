@@ -63,6 +63,7 @@ messages, the late-join answer, the known limits with their evidence, and the co
 | [events-and-weather.md](events-and-weather.md) | The clock, the weather, who rolls, the story events and how a client sees one fire, the event actors, the pyramid, the alarm, emails and the task |
 | [signals.md](signals.md) | The signal workstation: occupancy, the desk, the download simulation, the catch and the dishes, the deck, drives and racks, the laptop, the database, and the upgrades |
 | [devices.md](devices.md) | Doors, keypads, lights, the power panel, the turbine, windows and grime, the drone, and the economy: the balance, shop orders, the coin gun |
+| [media.md](media.md) | Shared media: the pool of pictures, posters, radio tracks and TV videos every player gets a copy of, frames and posters that show the same image, and TVs and radios that play the same thing |
 | [vehicles.md](vehicles.md) | The ATV: a mirror that runs the vehicle's physics natively and is corrected, the two authority predicates, the condition that travels |
 | [ui.md](ui.md) | The native screens, the F1 overlay, the HUD, and the game's notifications |
 | [send-path.md](send-path.md) | How fast each connection is paced, measured rather than configured; who may fill a send buffer, and where a held-back send waits |

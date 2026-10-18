@@ -132,6 +132,9 @@ constexpr ClientAuthorship AuthorshipOf(ReliableKind k) {
     case ReliableKind::PointSackRedeem:
     case ReliableKind::FireExtRupture:
     case ReliableKind::PropHitIntent:
+    case ReliableKind::MediaPool:
+    case ReliableKind::MediaChunk:
+    case ReliableKind::MediaPlay:
         return ClientAuthorship::Client;
     case ReliableKind::EntitySpawn:
     case ReliableKind::EntityDestroy:

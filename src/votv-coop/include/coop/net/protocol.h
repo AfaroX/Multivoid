@@ -1000,6 +1000,25 @@ enum class ReliableKind : uint8_t {
     // prop's own record or its destroy. Trust: the host reads its own copy and the sender's pose; the
     // amount and the point are the swing's, bounded on arrival. PropHitIntentPayload.
     PropHitIntent = 175,
+
+    // The shared media pool (coop/media/media_pool): the custom files players put in for every peer to
+    // have -- pictures, posters, radio tracks, TV videos. Host to all: the pool, the canonical list of
+    // {kind, name, size, hash}. Client to host: a share of one of its own files, or a request for a pooled
+    // file it lacks. Host to one client: a request for a file only that client holds. BlobChunkPayload,
+    // head [u8 op]. Never relayed: the host answers every request from its own disk. Late join: the pool
+    // at the joiner's world-ready.
+    MediaPool = 176,
+
+    // One piece of a pooled file, to the peer that asked for it: [MediaChunkHeader][up to kMediaChunkBytes].
+    // Larger than a datagram by design, as SaveTransferChunk is: the session diverts it to the media sink on
+    // the net thread, and it rides the Media lane, below every gameplay lane, so a video never delays the
+    // world. Either direction. Never relayed.
+    MediaChunk = 177,
+
+    // What a TV or a radio plays (coop/media/media_playback): host to all, the device's link, its
+    // play state and position; client to host, the intent of a press this client's player made on one.
+    // BlobChunkPayload, head [u8 op]. Never relayed. Late join: every playing device at world-ready.
+    MediaPlay = 178,
 };
 
 #pragma pack(push, 1)
@@ -1884,6 +1903,17 @@ struct PropHitIntentPayload {
     uint8_t  _pad[3];                    // 3  -- zeroed
 };
 static_assert(sizeof(PropHitIntentPayload) == 68, "PropHitIntentPayload must be 68 bytes");
+
+// The head of every MediaChunk: which pooled file, which piece of how many, and the file's size, so the
+// first piece to land can open the receiver's partial file and every later one can be checked against it.
+inline constexpr uint32_t kMediaChunkBytes = 56u * 1024u;
+struct MediaChunkHeader {
+    uint64_t hash;    // 8 -- the file's FNV-1a 64, the pool's identity for it
+    uint64_t size;    // 8 -- the whole file, bytes
+    uint32_t index;   // 4 -- this piece, from 0
+    uint32_t count;   // 4 -- ceil(size / kMediaChunkBytes), at least 1
+};
+static_assert(sizeof(MediaChunkHeader) == 24, "MediaChunkHeader must be 24 bytes");
 
 // The server upgrades lane (ServerUpgradeState). Ops 0 (install) and 1 (take-out) name a box by its
 // servers[] index; op 2, the canonical, carries every box's level in servers[] order (a farm past 64

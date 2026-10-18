@@ -215,6 +215,12 @@ public:
     // contract.
     void SetSaveBeginSink(BulkSinkFn sink) { saveBeginSink_.store(sink, std::memory_order_release); }
 
+    // The media sink: MediaChunk payloads, the same size class, go to this callback on the net thread with
+    // the link they came on. coop/media/media_pool registers its writer at install; the sink is
+    // thread-safe and never touches the engine.
+    using MediaSinkFn = void (*)(int peerSlot, const uint8_t* data, int len);
+    void SetMediaSink(MediaSinkFn sink) { mediaSink_.store(sink, std::memory_order_release); }
+
     // Host: until event_feed marks a joining slot world-ready (ClientWorldReady), the send paths
     // drop world-mutating kinds to it (IsPreWorldSendableKind in session_lanes.h); the world-ready
     // connect replay rebuilds that state.
@@ -711,6 +717,8 @@ private:
     std::atomic<BulkSinkFn> bulkSink_{nullptr};
     // The SaveTransferBegin sink (SetSaveBeginSink), the same lifetime.
     std::atomic<BulkSinkFn> saveBeginSink_{nullptr};
+    // The MediaChunk sink (SetMediaSink), the same lifetime.
+    std::atomic<MediaSinkFn> mediaSink_{nullptr};
 
     // Per-slot world-ready flags (see MarkSlotWorldReady).
     std::array<std::atomic<bool>, kMaxPeers> slotWorldReady_{};

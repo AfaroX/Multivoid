@@ -324,6 +324,16 @@ void Session::HandleMessage(int peerSlot, uint32_t hConn, const void* data, int 
             }
             return;
         }
+        // A pooled file's piece, the same size class: diverted whole to the media sink with the link it came
+        // on, which decides whether it asked for that file. Never inboxed, never relayed.
+        if (static_cast<ReliableKind>(rh.kind) == ReliableKind::MediaChunk) {
+            if (len < static_cast<int>(sizeof(PacketHeader) + sizeof(ReliableHeader)) + payloadLen) return;
+            if (MediaSinkFn sink = mediaSink_.load(std::memory_order_acquire)) {
+                sink(peerSlot, static_cast<const uint8_t*>(data) + sizeof(PacketHeader) + sizeof(ReliableHeader),
+                     payloadLen);
+            }
+            return;
+        }
         if (payloadLen > kMaxReliablePayload) return;
         if (len < static_cast<int>(sizeof(PacketHeader) + sizeof(ReliableHeader)) + payloadLen) return;
         // --- admission, client side ---

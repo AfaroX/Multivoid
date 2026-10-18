@@ -21,6 +21,7 @@
 #include "ui/scale.h"
 #include "ui/bug_report_pane.h"
 #include "ui/server_settings_pane.h"
+#include "ui/media_panel.h"
 #include "ui/skins_panel.h"
 
 #include <atomic>
@@ -247,6 +248,7 @@ const std::vector<Cat>& Tree() {
         }, false, true },
         { L10N_MARK("Cosmetics"), {
             { L10N_MARK("Skins"),     { { &RenderSkins, false } }, false },
+            { L10N_MARK("Shared media"), { { &ui::media_panel::Render, false } }, false },
             { L10N_MARK("Nameplate"), { { &RenderNameplatePref, false } }, false },
             { L10N_MARK("Chat"),      { { &RenderChatPref, false } }, false },
             { L10N_MARK("Interface"), { { &RenderFontPref, false } }, false },

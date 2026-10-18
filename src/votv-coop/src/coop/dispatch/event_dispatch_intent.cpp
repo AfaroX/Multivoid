@@ -29,6 +29,8 @@
 #include "coop/items/point_sack_intent.h"  // CLIENT->HOST an opened point sack
 #include "coop/items/fireext_rupture.h"
 #include "coop/props/prop_hit_authority.h"
+#include "coop/media/media_playback.h"
+#include "coop/media/media_pool.h"
 #include "coop/items/order_queue_sync.h"  // HOST->CLIENT the delivery order queue
 #include "coop/items/order_sync.h"
 #include "coop/props/pack_trash_intent.h"  // CLIENT->HOST bagging of a pile or clump
@@ -389,6 +391,24 @@ bool HandleIntentEvent(net::Session& session,
         net::FireExtRupturePayload p{};
         std::memcpy(&p, msg.payload, sizeof(p));
         coop::fireext_rupture::OnRupture(session, p, static_cast<uint8_t>(msg.senderPeerSlot));
+        break;
+    }
+    case net::ReliableKind::MediaPool:
+    case net::ReliableKind::MediaPlay: {
+        // The media pool's list, a share, a request; a TV's or a radio's state, or a client's press on one.
+        // Each lane checks the sender's role per op. Never relayed.
+        if (msg.payloadLen < sizeof(net::BlobChunkPayload) || msg.senderPeerSlot < 0 || msg.senderPeerSlot >= net::kMaxPeers) {
+            UE_LOGW("event_feed: %s dropped (length %zu, sender slot %d)",
+                    msg.kind == net::ReliableKind::MediaPool ? "MediaPool" : "MediaPlay",
+                    static_cast<size_t>(msg.payloadLen), msg.senderPeerSlot);
+            break;
+        }
+        net::BlobChunkPayload p{};
+        std::memcpy(&p, msg.payload, sizeof(p));
+        if (msg.kind == net::ReliableKind::MediaPool)
+            coop::media_pool::OnChunk(p, static_cast<uint8_t>(msg.senderPeerSlot));
+        else
+            coop::media_playback::OnChunk(p, static_cast<uint8_t>(msg.senderPeerSlot));
         break;
     }
     case net::ReliableKind::PropHitIntent: {

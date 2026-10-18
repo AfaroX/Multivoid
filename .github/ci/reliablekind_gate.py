@@ -116,6 +116,13 @@ NET_THREAD_TERMINAL = {
         "must": [(SESSION, r"==\s*ReliableKind::SaveTransferChunk\s*\)\s*\{",
                   "the net-thread branch that diverts the chunk to bulkSink_")],
     },
+    "MediaChunk": {
+        "reason": "The pooled-file piece, the save chunk's size class: 65000B payloads bypass the 228B inbox "
+                  "and go to the media sink with their link. Losing this branch makes every piece fail the "
+                  "payload cap and return silently, and no shared file ever arrives.",
+        "must": [(SESSION, r"==\s*ReliableKind::MediaChunk\s*\)\s*\{",
+                  "the net-thread branch that diverts the piece to mediaSink_")],
+    },
     "LinkProbe": {
         "reason": "The round-trip probe is answered on the net thread in both directions. Through "
                   "the game-thread inbox the echo would carry that thread's frame time, which on a "

@@ -2,6 +2,7 @@
 
 #include "coop/props/prop_save_data.h"
 #include "coop/props/record_sync.h"
+#include "coop/media/media_frames.h"
 
 #include "coop/dev/food_clock_probe.h"   // [dev] the food catch-up's two clocks, read at these seams
 #include "coop/interactables/floppy_slot_sync.h"  // RepairEjectedDisc
@@ -312,6 +313,7 @@ bool TryApply(void* actor, const std::wstring& key, const SR::SaveRecord& rec) {
     if (!SR::ApplyRecord(actor, rec, resolve)) return false;
     ++g_appliedTotal;
     coop::props::record_sync::NoteApplied(actor);  // the landed state is the base: not sent back
+    coop::media_frames::OnRecordApplied(actor);    // a frame or a poster shows the image it now names
     coop::dev::food_clock_probe::NoteApply(actor, key, rec);
     // The author's record has LANDED, so the host may publish this key again, and does so here, from
     // what it now holds: a peer that became ready while the key was awaited was declined by its join

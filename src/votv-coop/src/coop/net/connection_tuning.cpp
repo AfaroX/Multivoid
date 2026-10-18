@@ -19,9 +19,9 @@ void TuneConnection(uint32_t hConn, bool rateControlled, long pinnedRateKbs) {
     const auto h = static_cast<HSteamNetConnection>(hConn);
 
     // The lanes. On failure reliable sends collapse to lane 0 -- functional, no priority routing.
-    constexpr int kLaneCount = 3;  // matches Lane::Count in session_lanes.h
-    const int priorities[kLaneCount] = { 0, 1, 2 };
-    const uint16 weights[kLaneCount] = { 4, 2, 1 };
+    constexpr int kLaneCount = 4;  // matches Lane::Count in session_lanes.h
+    const int priorities[kLaneCount] = { 0, 1, 2, 3 };
+    const uint16 weights[kLaneCount] = { 4, 2, 1, 1 };
     const EResult rc = SteamNetworkingSockets()->ConfigureConnectionLanes(
         h, kLaneCount, priorities, weights);
     if (rc != k_EResultOK) {
