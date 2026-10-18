@@ -92,6 +92,7 @@ who leaves frees what they held and hands what they owned to the host. `fin` run
 |---|---|
 | A file is fetched only while both players are in the session; a pooled file the host does not hold yet waits for its sharer | `[V]` |
 | A video's position is followed to within two seconds, not frame by frame | `[V]` by design: a closer follow would seek often |
+| A follower's device that changes channel by itself, without `openLink`, plays that channel on its own screen until its owner opens a link again | `[V]` `coop/media/media_playback` follows the owner's link and opens it only on a new pick |
 | The radio's built-in stations (`prop_radio_local_C`) are not synced | `[V]` they play the game's own sounds, not the asset folder |
 
 ## Code map

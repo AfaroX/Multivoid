@@ -218,8 +218,18 @@ bool TakeFromOthers(int slot, const coop::net::PropPoseSnapshot& pose, void* pro
         }
         void* local = coop::local_streams::LocalPlayer();
         const bool dropped = local && ue_wrap::engine::ReleaseMainPlayerGrabIfHolding(local, prop);
+        if (!dropped) {
+            // The hand here would not let go (a carry, not a grab): parking the body it holds would leave two
+            // holders fighting on this screen, so the coin's call waits for this player's own release.
+            if (hold.refusedGen != pose.holdGen) {
+                hold.refusedGen = pose.holdGen;
+                UE_LOGW("remote_prop: slot %d hold %u won the coin for the prop this player holds, but the hand "
+                        "here did not let go -- not driven until it does", slot, static_cast<unsigned>(pose.holdGen));
+            }
+            return false;
+        }
         UE_LOGI("remote_prop: slot %d hold %u grabbed the prop this player holds at the same moment -- the coin "
-                "gives it to them%s", slot, static_cast<unsigned>(pose.holdGen), dropped ? "; let go here" : "");
+                "gives it to them; let go here", slot, static_cast<unsigned>(pose.holdGen));
         return true;
     }
     for (int s = 0; s < static_cast<int>(coop::players::kMaxPeers); ++s) {
@@ -366,6 +376,20 @@ void ResolveAndStartDrive(int slot, const coop::net::PropPoseSnapshot& pose) {
 }
 
 }  // namespace
+
+int DrivingSlot(void* actor) {
+    if (!actor) return -1;
+    for (int s = 0; s < static_cast<int>(coop::players::kMaxPeers); ++s)
+        if (g_drives[s].LiveActor() == actor) return s;
+    return -1;
+}
+
+void YieldSlotToStream(int slot) {
+    if (slot < 0 || slot >= static_cast<int>(coop::players::kMaxPeers)) return;
+    UE_LOGI("remote_prop: slot %d's hold of %p yields to its own stream -- its release is in flight", slot,
+            g_drives[slot].LiveActor());
+    YieldSlot(slot, /*physicsBack=*/false);
+}
 
 bool YieldCoastForGrab(void* actor) {
     UE_ASSERT_GAME_THREAD("g_drives (YieldCoastForGrab)");
@@ -633,7 +657,7 @@ void OnRelease(int senderSlot, const coop::net::PropReleasePayload& payload, voi
         // The holder streams the flight on its driven-prop channel: this copy holds still at the release
         // pose, parked, until that stream moves it, and its end hands the physics back (prop_drive_stream).
         // Flown here on its own it would knock this world's props as if this peer had thrown it.
-        coop::prop_park::Park(propActor, meshToActOn);
+        coop::prop_drive_stream::ExpectStream(propActor, payload.elementId, senderSlot);
         if (propActor && linSpeed > coop::net::kThrownLinVelThreshold) {
             ue_wrap::prop::CallPropThrown(propActor, localPlayer);
             coop::prop_sound::PlayThrowWhoosh(propActor);

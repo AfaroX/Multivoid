@@ -11,6 +11,7 @@
 #include "coop/props/remote_prop.h"          // ResolveLiveActorByEid
 
 #include "ue_wrap/actors/prop.h"             // GetInteractableKeyString
+#include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
@@ -23,7 +24,6 @@
 #include <atomic>
 #include <cstring>
 #include <map>
-#include <set>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -61,7 +61,12 @@ R::InstanceOffset g_cordDrag(L"drag");        // cord_C.drag: true while this ma
 // The drag: this machine's player's cords streaming their head, and the cords another player drags here.
 struct DragSent { uint64_t at = 0; ue_wrap::FVector loc{}; };
 std::map<void*, DragSent> g_localDrag;
-std::set<void*> g_remoteDrag;
+std::map<void*, uint64_t> g_remoteDrag;   // cord -> when its last dragged pose arrived
+constexpr uint64_t kRemoteDragMs = 2000;  // no pose for this long: the drag is over, the head goes home
+// CLIENT: a cord this copy's tick wants out as stretched, since when. The host decides at first, since the
+// prop's place is the host's; a stretch that outlasts kStretchMs here comes out and is sent.
+std::map<void*, uint64_t> g_stretchSince;
+constexpr uint64_t kStretchMs = 3000;
 R::ParamOffset g_pSocket(L"socket"), g_pLoad(L"load");
 
 uint64_t NowMs() { return static_cast<uint64_t>(::GetTickCount64()); }
@@ -99,7 +104,7 @@ std::wstring KeyOf(void* actor) {
 // ---- outlets ----
 
 // Every live outlet: few, and walked only when a plug arrives, at most once per few seconds.
-struct Outlet { void* actor; int32_t idx; std::wstring key; ue_wrap::FVector at; };
+struct Outlet { ue_wrap::CachedObjRef ref; std::wstring key; ue_wrap::FVector at; };
 std::vector<Outlet> g_outlets;
 uint64_t g_outletsAt = 0;
 
@@ -116,27 +121,40 @@ void WalkOutlets(uint64_t now) {
         if (it == isOutletClass.end()) it = isOutletClass.emplace(cls, HasClassInChain(obj, L"cordSocket_C")).first;
         if (!it->second || !R::IsLive(obj)) continue;
         if (R::ToString(R::NameOf(obj)).rfind(L"Default__", 0) == 0) continue;
-        Outlet o{obj, R::InternalIndexOf(obj), coop::element::PortableWireKey(obj), {}};
+        Outlet o;
+        o.ref.Set(obj);
+        o.key = coop::element::PortableWireKey(obj);
         ue_wrap::engine::TryGetActorLocation(obj, o.at);
         g_outlets.push_back(std::move(o));
     }
 }
 
+constexpr uint64_t kMissWalkMs = 500;     // a miss walks the world again at most this often
+
 void* FindOutlet(const std::wstring& key, const ue_wrap::FVector& at, bool rewalked = false) {
     const uint64_t now = NowMs();
-    if (g_outlets.empty() || now - g_outletsAt > kSocketsMs) { WalkOutlets(now); rewalked = true; }
+    if (g_outlets.empty() ? now - g_outletsAt > kMissWalkMs : now - g_outletsAt > kSocketsMs) {
+        WalkOutlets(now);
+        rewalked = true;
+    }
     void* nearest = nullptr;
     float best = kNearCm * kNearCm;
     for (const Outlet& o : g_outlets) {
-        if (!R::IsLiveByIndex(o.actor, o.idx)) continue;
-        if (!key.empty() && o.key == key) return o.actor;
+        void* a = o.ref.Get();
+        if (!a) continue;
+        if (!key.empty() && o.key == key) return a;
         ue_wrap::FVector p = o.at;
-        ue_wrap::engine::TryGetActorLocation(o.actor, p);   // an outlet on a prop moves with it
+        ue_wrap::engine::TryGetActorLocation(a, p);   // an outlet on a prop moves with it
         const float dx = p.X - at.X, dy = p.Y - at.Y, dz = p.Z - at.Z;
         const float d2 = dx * dx + dy * dy + dz * dz;
-        if (d2 < best) { best = d2; nearest = o.actor; }
+        if (d2 < best) { best = d2; nearest = a; }
     }
-    if (!nearest && !rewalked) { WalkOutlets(now); return FindOutlet(key, at, true); }
+    // A named outlet not in the list may be newer than it -- a power strip just set down by a wall outlet --
+    // so the list is walked again before the nearest stands in for it.
+    if (!rewalked && (!nearest || !key.empty()) && now - g_outletsAt > kMissWalkMs) {
+        WalkOutlets(now);
+        return FindOutlet(key, at, true);
+    }
     return nearest;
 }
 
@@ -221,7 +239,7 @@ bool Apply(const coop::net::CordPlugPayload& p, const char* why) {
         if (current && !CallCordVerb(cord, L"disconnect")) return false;
         void* head = ReadObj(cord, g_cordHead);
         if (!head) return false;
-        g_remoteDrag.insert(cord);
+        g_remoteDrag[cord] = NowMs();
         return SetHeadPose(head, ue_wrap::FVector{p.sx, p.sy, p.sz}, ue_wrap::FRotator{p.hp, p.hy, p.hr});
     }
     const bool wasDragged = g_remoteDrag.erase(cord) != 0;
@@ -253,9 +271,10 @@ bool Apply(const coop::net::CordPlugPayload& p, const char* why) {
     return ReadObj(cord, g_cordSocket) == outlet;
 }
 
-// CLIENT: what the host last said of each item, held while a joiner's load settles -- the game's own
-// reconnect from the save runs after a delay and would undo a newer unplug.
-struct Asserted { coop::net::CordPlugPayload p; uint64_t until; };
+// CLIENT: what the host's join snapshot said of each item, held while a joiner's load settles -- the game's
+// own reconnect from the save runs after a delay and would undo a newer unplug. Pinned to the item it first
+// resolved to: a new incarnation of the key is not this one.
+struct Asserted { coop::net::CordPlugPayload p; uint64_t until; ue_wrap::CachedObjRef item; };
 std::map<std::wstring, Asserted> g_assert;
 uint64_t g_nextAssert = 0;
 
@@ -296,11 +315,19 @@ sg::Verdict OnDisconnectPre(const sg::Call& c) {
     }
     if (!item) return sg::Verdict::Run;
     if (c.object == g_inTick) {
-        // Stretched too far: the host's copy decides, so a client's copy that strayed keeps the plug.
-        if (!IsHost(s)) return sg::Verdict::Cancel;
+        // Stretched too far: the host's copy decides, so a client's copy that strayed a moment keeps the
+        // plug; one stretched for kStretchMs comes out here too and says so.
+        if (!IsHost(s)) {
+            const uint64_t now = NowMs();
+            auto st = g_stretchSince.find(c.object);
+            if (st == g_stretchSince.end()) { g_stretchSince[c.object] = now; return sg::Verdict::Cancel; }
+            if (now - st->second < kStretchMs) return sg::Verdict::Cancel;
+            g_stretchSince.erase(st);
+        }
         SendFor(s, item, nullptr, "stretched out");
         return sg::Verdict::Run;
     }
+    g_stretchSince.erase(c.object);
     Forget(item);
     SendFor(s, item, nullptr, "unplug");
     return sg::Verdict::Run;
@@ -313,7 +340,15 @@ sg::Verdict OnTickPre(const sg::Call& c) { g_inTick = c.object; return sg::Verdi
 void OnTickPost(const sg::Call& c) {
     g_inTick = nullptr;
     auto* s = Live();
-    if (!s || !c.object || !ReadBoolField(c.object, g_cordDrag)) return;
+    if (!s || !c.object) return;
+    const bool plugged = ReadObj(c.object, g_cordSocket) != nullptr;
+    if (plugged || !ReadBoolField(c.object, g_cordDrag)) {
+        // The drag is over. One that ended in an outlet ended with its plug; one the game ended any other way
+        // than a disconnect puts the head back on the item on every screen.
+        if (g_localDrag.erase(c.object) && !plugged)
+            if (void* item = ReadObj(c.object, g_cordParent)) SendFor(s, item, nullptr, "drag ended");
+        return;
+    }
     void* item = ReadObj(c.object, g_cordParent);
     void* head = ReadObj(c.object, g_cordHead);
     if (!item || !head) return;
@@ -332,7 +367,13 @@ void OnTickPost(const sg::Call& c) {
     d.at = now;
     d.loc = at;
 }
-sg::Verdict OnDestroyedPre(const sg::Call& c) { g_destroying = c.object; return sg::Verdict::Run; }
+sg::Verdict OnDestroyedPre(const sg::Call& c) {
+    g_destroying = c.object;
+    g_localDrag.erase(c.object);
+    g_remoteDrag.erase(c.object);
+    g_stretchSince.erase(c.object);
+    return sg::Verdict::Run;
+}
 void OnDestroyedPost(const sg::Call&) { g_destroying = nullptr; }
 
 }  // namespace
@@ -362,12 +403,22 @@ void Tick() {
                         rows[i]->Class(), rows[i]->Name());
         }
     }
-    if (g_assert.empty()) return;
     const uint64_t now = NowMs();
+    for (auto it = g_remoteDrag.begin(); it != g_remoteDrag.end();) {
+        if (now - it->second < kRemoteDragMs) { ++it; continue; }
+        // The dragger went quiet -- it left, or its drag's end was lost: the head goes back on the item.
+        void* cord = it->first;
+        it = g_remoteDrag.erase(it);
+        if (R::IsLive(cord) && !ReadObj(cord, g_cordSocket)) CallCordVerb(cord, L"disconnect");
+    }
+    if (g_assert.empty()) return;
     if (now < g_nextAssert || !Live()) return;
     g_nextAssert = now + kAssertStep;
     for (auto it = g_assert.begin(); it != g_assert.end();) {
         if (now > it->second.until) { it = g_assert.erase(it); continue; }
+        void* item = ResolveItem(it->second.p);
+        if (it->second.item.Raw() && item != it->second.item.Get()) { it = g_assert.erase(it); continue; }
+        if (!it->second.item.Raw() && item) it->second.item.Set(item);
         Apply(it->second.p, "held");
         ++it;
     }
@@ -378,13 +429,16 @@ void OnCordPlug(coop::net::Session& session, const coop::net::CordPlugPayload& p
     if (!host && senderSlot != 0) return;   // a client hears the host alone
     Apply(payload, host ? "a client's" : "the host's");
     if (host) {
-        session.SendReliable(coop::net::ReliableKind::CordPlug, &payload, sizeof(payload));   // to everyone
+        // To every client but the sender, whose copy already did it: an echo of its own drag would unplug
+        // the plug that ended the drag.
+        for (int i = 1; i < coop::net::kMaxPeers; ++i)
+            if (i != senderSlot) session.SendReliableToSlot(i, coop::net::ReliableKind::CordPlug, &payload, sizeof(payload));
         return;
     }
-    // Held a while: a newer word from the host replaces it, and this player's own plug drops it. A dragged
-    // head is the moment's alone: it ends what was held.
-    if (payload.plugged == 2) g_assert.erase(ItemId(payload));
-    else g_assert[ItemId(payload)] = Asserted{payload, NowMs() + kAssertMs};
+    // The join snapshot is held a while against the save's delayed reconnect; any later word from the host
+    // ends what was held.
+    if (payload.snapshot) g_assert[ItemId(payload)] = Asserted{payload, NowMs() + kAssertMs, {}};
+    else g_assert.erase(ItemId(payload));
 }
 
 void QueueConnectBroadcastForSlot(int peerSlot) {
@@ -399,6 +453,7 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
         if (!cord) continue;
         coop::net::CordPlugPayload p{};
         if (!Fill(e.actor, ReadObj(cord, g_cordSocket), p)) continue;
+        p.snapshot = 1;
         if (s->SendReliableToSlot(peerSlot, coop::net::ReliableKind::CordPlug, &p, sizeof(p))) ++sent;
     }
     UE_LOGI("cord_sync: HOST sent slot %d the cords of %d corded item(s)", peerSlot, sent);
@@ -412,6 +467,7 @@ void OnDisconnect() {
     g_assert.clear();
     g_localDrag.clear();
     g_remoteDrag.clear();
+    g_stretchSince.clear();
     g_outlets.clear();
     g_outletsAt = 0;
     g_inTick = g_destroying = nullptr;

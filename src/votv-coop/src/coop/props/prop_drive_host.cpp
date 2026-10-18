@@ -131,12 +131,21 @@ void SendEnd(coop::net::Session& s, const Driven& d, void* actor, const ue_wrap:
 
 // A new row for `actor` when the channel can carry it: a keyed prop with an element id, in no hand and
 // under no other peer's stream, of a class peers hold. Null otherwise. `claimed` false opens it coasting.
-Driven* Open(void* actor, bool claimed, const char* why, bool ownHandLetGo = false) {
+// The prop's id as every peer names it: a client's own copy of a host prop carries the host's id beside any
+// local one, and the host's is the one the other peers resolve.
+uint32_t WireEid(void* actor) {
+    const coop::element::ElementId m = coop::remote_prop::ResolveMirrorEidByActor(actor, /*wireMirrorOnly=*/true);
+    if (m != coop::element::kInvalidId && m != 0u) return static_cast<uint32_t>(m);
+    const coop::element::ElementId e = coop::element::Registry::Get().EidForActor(actor);
+    return (e == coop::element::kInvalidId) ? 0u : static_cast<uint32_t>(e);
+}
+
+Driven* Open(void* actor, bool claimed, const char* why, bool ownHandLetGo = false, uint32_t eidHint = 0) {
     if (!PR::IsDescendantOfProp(actor)) return nullptr;
     if (HeldBySomeone(actor, ownHandLetGo)) return nullptr;   // the held-prop lane owns a prop in a hand
     if (coop::prop_drive_stream::IsParked(actor)) return nullptr;   // another peer moves it here
-    const coop::element::ElementId eid = coop::element::Registry::Get().EidForActor(actor);
-    if (eid == coop::element::kInvalidId || eid == 0u) {
+    const uint32_t eid = eidHint ? eidHint : WireEid(actor);
+    if (eid == 0u) {
         // A feeder asks again every pass while the tie holds, so the line is per actor, not per pass.
         static void* sRefusedSaid = nullptr;
         if (actor != sRefusedSaid) {
@@ -161,6 +170,7 @@ Driven* Open(void* actor, bool claimed, const char* why, bool ownHandLetGo = fal
     if (++gen == 0) ++gen;   // 0 is the stream's "no generation"
     d.gen = gen;
     d.lastMoveMs = coop::active_drive::NowMs();
+    coop::prop_drive_stream::NoteOwnClaim(d.eid, d.gen);
     g_driven.push_back(std::move(d));
     UE_LOGI("[PROP-DRIVE] OWN %s eid=%u gen=%u key='%ls' (%s) -- %zu driven",
             claimed ? "CLAIM" : "COAST", g_driven.back().eid, static_cast<unsigned>(g_driven.back().gen),
@@ -198,11 +208,11 @@ void Coast(void* actor, const char* reason) {
     Open(actor, /*claimed=*/false, reason ? reason : "");
 }
 
-void CoastLetGo(void* actor) {
+void CoastLetGo(void* actor, uint32_t eid) {
     UE_ASSERT_GAME_THREAD("prop_drive_host::CoastLetGo");
     if (!actor) return;
     if (Driven* d = Find(actor)) { d->claimed = false; d->nextProbeMs = 0; d->lastMoveMs = coop::active_drive::NowMs(); return; }
-    Open(actor, /*claimed=*/false, "release", /*ownHandLetGo=*/true);
+    Open(actor, /*claimed=*/false, "release", /*ownHandLetGo=*/true, eid);
 }
 
 size_t CoastingCount() {

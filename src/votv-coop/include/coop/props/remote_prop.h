@@ -63,6 +63,13 @@ bool IsActorUnderAnyDrive(void* actor);
 // thread.
 bool YieldCoastForGrab(void* actor);
 
+// The slot whose held-prop drive moves `actor` here, or -1. Game thread.
+int DrivingSlot(void* actor);
+
+// That slot's hold yields to the driven-prop stream the same peer just started for the prop: its release,
+// which says so, is still in flight. Game thread.
+void YieldSlotToStream(int slot);
+
 // Register a wire-received prop mirror Element at `eid` bound to `actor`. Idempotent for
 // duplicate eids (a silent no-op); skips an eid of 0 (an unminted sender) and the invalid id.
 // The register-mirror pattern: allocate, insert under the manager mutex, register, roll back

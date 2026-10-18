@@ -25,6 +25,9 @@ namespace R = ue_wrap::reflection;
 constexpr uint64_t kRewalkMs = 2000;
 
 std::unordered_map<std::wstring, ue_wrap::CachedObjRef> g_parts;
+// A key a walk did not find, and when to look again: a part this peer lacks is not worth a walk per pose.
+std::unordered_map<std::wstring, uint64_t> g_missUntil;
+constexpr uint64_t kMissMs = 10000;
 uint64_t g_walkedAt = 0;
 bool g_walked = false;
 
@@ -51,7 +54,15 @@ void Walk(uint64_t now) {
 
 }  // namespace
 
-bool IsPartKey(const std::wstring& wireKey) { return wireKey.rfind(L"mv_", 0) == 0; }
+bool IsPartKey(const std::wstring& wireKey) {
+    // "mv_" and 16 lowercase hex (coop/element/portable_identity): a game Key that merely starts so is not one.
+    if (wireKey.size() != 19 || wireKey.rfind(L"mv_", 0) != 0) return false;
+    for (size_t i = 3; i < wireKey.size(); ++i) {
+        const wchar_t c = wireKey[i];
+        if (!((c >= L'0' && c <= L'9') || (c >= L'a' && c <= L'f'))) return false;
+    }
+    return true;
+}
 
 void* Find(const std::wstring& wireKey) {
     if (!IsPartKey(wireKey)) return nullptr;
@@ -60,9 +71,13 @@ void* Find(const std::wstring& wireKey) {
         if (void* p = it->second.Get()) return p;
     const uint64_t now = static_cast<uint64_t>(::GetTickCount64());
     if (g_walked && now - g_walkedAt < kRewalkMs) return nullptr;
+    if (auto m = g_missUntil.find(wireKey); m != g_missUntil.end() && now < m->second) return nullptr;
     Walk(now);
     it = g_parts.find(wireKey);
-    return it != g_parts.end() ? it->second.Get() : nullptr;
+    void* found = it != g_parts.end() ? it->second.Get() : nullptr;
+    if (found) g_missUntil.erase(wireKey);
+    else g_missUntil[wireKey] = now + kMissMs;
+    return found;
 }
 
 std::wstring WireKeyFor(void* actor) {
@@ -82,6 +97,7 @@ void* ResolveWire(const std::wstring& wireKey, uint32_t eid) {
 
 void OnDisconnect() {
     g_parts.clear();
+    g_missUntil.clear();
     g_walked = false;
     g_walkedAt = 0;
 }

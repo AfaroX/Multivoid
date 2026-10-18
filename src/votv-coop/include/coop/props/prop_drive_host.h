@@ -42,7 +42,8 @@ void Coast(void* actor, const char* reason);
 
 // This player just let go of `actor` while it moves: it streams, coasting, until it rests. The release
 // edge runs before this player's hand is cleared, so the own-hand refusal does not apply. Game thread.
-void CoastLetGo(void* actor);
+// `eid` is the id the hold streamed under, which every peer already resolves.
+void CoastLetGo(void* actor, uint32_t eid);
 
 // A peer's world just came up: every driven prop's current pose is re-sent on the next tick, so
 // the joiner parks the resting ones too, which the delta gate would otherwise never send it.

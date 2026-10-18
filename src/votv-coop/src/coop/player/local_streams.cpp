@@ -412,7 +412,10 @@ void Tick(coop::net::Session& session, void* local, void* controller) {
             // keyed prop. The wire eid resolves once here and is cached for the carry.
             const bool mirrored = coop::trash_collect_sync::EnsureHeldItemBroadcast(heldActor, &session);
             g_lastHeldIsPart = ue_wrap::engine::IsChildActor(heldActor);
-            g_lastHeldPartKey = g_lastHeldIsPart ? coop::element::PortableWireKey(heldActor) : std::wstring();
+            // The receiver indexes a parent's parts that are props (coop/props/part_index); any other part has
+            // no copy there to drive.
+            g_lastHeldPartKey = (g_lastHeldIsPart && ue_wrap::prop::IsDescendantOfProp(heldActor))
+                                    ? coop::element::PortableWireKey(heldActor) : std::wstring();
             // The host's grab adoption: the clump's identity is its birth certificate (every clump
             // is born from a chipPile, on an E-press or a use-hold alike). An existing tracked
             // clump re-entering the hand resolves by the tracker. A "no certificate mid-carry means
@@ -687,7 +690,7 @@ void Tick(coop::net::Session& session, void* local, void* controller) {
                                 (rel.physFlags & coop::net::propspawn_flags::kSimulatePhysics) != 0;
             const bool coastHere = moving && relEid == 0;
             if (moving && relEid != 0) {
-                coop::prop_drive_host::CoastLetGo(g_lastHeldProp.Raw());
+                coop::prop_drive_host::CoastLetGo(g_lastHeldProp.Raw(), relEid);
                 rel.coasts = coop::prop_drive_host::OwnsActor(g_lastHeldProp.Raw()) ? 1 : 0;
             }
             if (coastHere) {

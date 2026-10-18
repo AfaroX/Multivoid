@@ -105,6 +105,13 @@ coop::net::Session* Live() {
 bool IsHost(coop::net::Session* s) { return s && s->role() == coop::net::Role::Host; }
 uint8_t Me(coop::net::Session* s) { return IsHost(s) ? 0 : coop::players::Registry::Get().LocalPeerId(); }
 
+// A new open's sequence: past every one seen, with this peer's slot in the low bits, so two peers' picks that
+// cross never share one.
+uint32_t MintSeq(coop::net::Session* s) {
+    g_maxSeq = (((g_maxSeq >> 3) + 1) << 3) | (static_cast<uint32_t>(Me(s)) & 7u);
+    return g_maxSeq;
+}
+
 std::wstring Norm(std::wstring p) {
     for (auto& c : p) { if (c == L'/') c = L'\\'; c = static_cast<wchar_t>(std::towlower(c)); }
     return p;
@@ -242,12 +249,12 @@ void Note(const std::wstring& key, uint8_t holder, void* actor) {
 // ---- ownership ----
 
 // This peer's copy plays from here: its next poll sends what it plays. The url last seen as owner is
-// forgotten, since a follower's opens since then were the old owner's link, not a new pick.
+// forgotten, since a follower's opens since then were the old owner's link, not a new pick. A link this
+// copy has not opened yet (the pool still bringing the file) it opens first, before it speaks for it.
 void TakeOwnCopy(Dev& d) {
     d.dirty = true;
     d.lastAt = 0;
     d.rawUrl.clear();
-    d.appliedSeq = d.st.openSeq;
 }
 
 void SendClaim(coop::net::Session* s, const std::wstring& key, bool hold) {
@@ -304,7 +311,10 @@ bool ClaimHere(coop::net::Session* s, void* actor, bool hold) {
 
 void ReleaseHere(coop::net::Session* s, void* actor) {
     const std::wstring key = KeyOf(actor);
-    if (key.empty() || !g_myOpen.erase(key)) return;
+    if (key.empty()) return;
+    // Sent whenever this player's interface on the device closes, whatever a crossing state said of the
+    // holder: the host ignores a release from one that does not hold it.
+    g_myOpen.erase(key);
     if (IsHost(s)) { HostRelease(s, key, 0); return; }
     auto it = g_dev.find(key);
     if (it != g_dev.end() && it->second.holder == Me(s)) it->second.holder = kNoSlot;
@@ -315,14 +325,15 @@ void ReleaseHere(coop::net::Session* s, void* actor) {
 }
 
 // The owner's copy just opened a link.
-void Track(void* actor, const std::wstring& name, const std::wstring& link, bool isUrl, bool pause) {
+void Track(coop::net::Session* s, void* actor, const std::wstring& name, const std::wstring& link, bool isUrl,
+           bool pause) {
     Dev* d = DevFor(KeyOf(actor));
     if (!d) return;
     d->st.name = name;
     d->st.link = ToWire(link, isUrl);
     d->st.isUrl = isUrl;
     d->st.playing = !pause;
-    d->st.openSeq = ++g_maxSeq;
+    d->st.openSeq = MintSeq(s);
     d->st.timeMs = 0;
     d->appliedSeq = d->st.openSeq;
     d->have = true;
@@ -345,6 +356,20 @@ void OwnerPoll(coop::net::Session* s, uint64_t now) {
         void* actor = coop::prop_key_index::Find(key);
         void* player = actor ? MD::PlayerOf(actor) : nullptr;
         if (!player) continue;
+        const bool open = g_myOpen.count(key) != 0;
+        if (d.have && !d.st.link.empty() && d.appliedSeq != d.st.openSeq) {
+            // The link this copy now speaks for has not been opened here: open it once the pool has it, and
+            // say nothing of a copy that still plays something else. The interface's beat still goes out.
+            if (Openable(d.st.link) &&
+                MD::OpenLink(actor, d.st.name, FromWire(d.st.link), d.st.isUrl, !d.st.playing)) {
+                d.appliedSeq = d.st.openSeq;
+                d.openedMs = now;
+                d.rawUrl.clear();
+                d.lastAt = 0;
+            }
+            if (open && !IsHost(s) && now - d.sentMs >= kBeatMs) { d.sentMs = now; SendClaim(s, key, /*hold=*/true); }
+            continue;
+        }
         bool playing = false;
         int64_t t = 0;
         MD::IsPlaying(player, playing);
@@ -360,7 +385,7 @@ void OwnerPoll(coop::net::Session* s, uint64_t now) {
                 d.st.name = slash == std::wstring::npos ? path : path.substr(slash + 1);
                 d.st.link = ToWire(path, isUrl);
                 d.st.isUrl = isUrl;
-                d.st.openSeq = ++g_maxSeq;
+                d.st.openSeq = MintSeq(s);
                 d.appliedSeq = d.st.openSeq;
                 d.have = true;
                 d.dirty = true;
@@ -381,7 +406,7 @@ void OwnerPoll(coop::net::Session* s, uint64_t now) {
         if (MD::ReadBrightness(actor, br) && std::fabs(br - d.st.brightness) > 0.005f) { d.st.brightness = br; d.dirty = true; }
         if (!d.have) {
             // Nothing plays yet, but the interface is open: the holder's word to the host that it is there.
-            if (d.holder == me && !IsHost(s) && now - d.sentMs >= kBeatMs) {
+            if (open && !IsHost(s) && now - d.sentMs >= kBeatMs) {
                 d.sentMs = now;
                 SendClaim(s, key, /*hold=*/true);
             }
@@ -389,13 +414,23 @@ void OwnerPoll(coop::net::Session* s, uint64_t now) {
         }
         // On a change at once; every two seconds while it plays or this player has it open, which is also
         // the holder's word to the host that it is still there.
-        if (d.dirty || ((playing || d.holder == me) && now - d.sentMs >= kBeatMs)) {
+        if (d.dirty || ((playing || open) && now - d.sentMs >= kBeatMs)) {
             d.dirty = false;
             d.sentMs = now;
             send.push_back(key);
         }
     }
     if (!send.empty()) SendStates(s, -1, send);
+    // An interface still open on a device the host freed -- a stall past the lease -- takes it back while it
+    // is free; one another player took since is theirs, and the next press here says so.
+    if (!IsHost(s)) {
+        for (const std::wstring& key : g_myOpen) {
+            auto it = g_dev.find(key);
+            if (it == g_dev.end() || it->second.holder != kNoSlot || now - it->second.sentMs < kBeatMs) continue;
+            it->second.sentMs = now;
+            SendClaim(s, key, /*hold=*/true);
+        }
+    }
 }
 
 // HOST: a device that plays without anyone having opened it this session (the host's world was playing
@@ -469,7 +504,7 @@ sg::Verdict OnOpenPre(const sg::Call& c) {
     bool isUrl = false, pause = false;
     if (!MD::ReadOpenLinkArgs(c.function, c.locals, name, link, isUrl, pause)) return sg::Verdict::Run;
     if (!ClaimHere(s, c.object, /*hold=*/false)) return sg::Verdict::Cancel;
-    Track(c.object, name, link, isUrl, pause);
+    Track(s, c.object, name, link, isUrl, pause);
     return sg::Verdict::Run;
 }
 
@@ -477,8 +512,11 @@ sg::Verdict OnOpenPre(const sg::Call& c) {
 sg::Verdict OnFinPre(const sg::Call& c) {
     auto* s = Live();
     if (!s || c.fromOurCode || !c.object || MD::KindOf(c.object) == MD::Kind::None) return sg::Verdict::Run;
-    auto it = g_dev.find(KeyOf(c.object));
-    if (it == g_dev.end()) return IsHost(s) ? sg::Verdict::Run : sg::Verdict::Cancel;
+    const std::wstring key = KeyOf(c.object);
+    auto it = g_dev.find(key);
+    // A device this module cannot track -- no key, or past the cap -- is each peer's own, playlist and all.
+    if (it == g_dev.end())
+        return (IsHost(s) || key.empty() || g_dev.size() >= kMaxDevices) ? sg::Verdict::Run : sg::Verdict::Cancel;
     return it->second.owner == Me(s) ? sg::Verdict::Run : sg::Verdict::Cancel;
 }
 
@@ -592,7 +630,6 @@ void OnChunk(const coop::net::BlobChunkPayload& p, uint8_t senderSlot) {
             d->owner = owner;
             d->holder = holder;
             if (owner == me) continue;   // this peer's own copy is the one that plays
-            if (holder != me) g_myOpen.erase(key);
             d->st = std::move(st);
             d->recvMs = now;
             d->have = true;
@@ -607,8 +644,9 @@ void OnChunk(const coop::net::BlobChunkPayload& p, uint8_t senderSlot) {
         const bool hold = r.U8() != 0;
         if (!r.ok) return;
         if (!HostClaim(s, key, senderSlot, hold, now)) {
+            auto held = g_dev.find(key);
             UE_LOGI("media_playback: HOST refused slot %u's claim on '%ls': slot %u has it", senderSlot, key.c_str(),
-                    static_cast<unsigned>(g_dev[key].holder));
+                    static_cast<unsigned>(held != g_dev.end() ? held->second.holder : kNoSlot));
             SendStates(s, senderSlot, {key});   // the claimer learns who has it, and follows again
         }
         return;

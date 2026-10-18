@@ -26,7 +26,7 @@ namespace sg = ue_wrap::script_gate;
 namespace R  = ue_wrap::reflection;
 namespace E  = ue_wrap::engine;
 
-UE_FACT_FN(kRowSetPropProps, "prop_tool_flags", L"prop_C", L"setPropProps", Declared);
+UE_FACT_FN(kRowSetPropProps, "prop_tool_flags", nullptr, L"setPropProps", AnyClass);
 constexpr int kTag = 0x54464C47;  // 'TFLG'
 
 constexpr uint8_t kStatic = 1, kFrozen = 2, kActive = 4, kSleeping = 8;
@@ -89,7 +89,7 @@ void Apply(const coop::net::PropToolFlagsPayload& p, const char* why) {
 void OnSetPropPropsPost(const sg::Call& c) {
     auto* s = Live();
     if (!s || c.fromOurCode || !c.object || !c.locals) return;
-    if (!HasClassInChain(c.callerObject, L"tool_propProps_C")) return;
+    if (!HasClassInChain(c.callerObject, L"tool_propProps_C") || !HasClassInChain(c.object, L"prop_C")) return;
     coop::net::PropToolFlagsPayload p{};
     const std::wstring key = coop::part_index::WireKeyFor(c.object);
     const coop::element::ElementId eid = coop::element::Registry::Get().EidForActor(c.object);
@@ -131,7 +131,11 @@ void OnToolFlags(coop::net::Session& session, const coop::net::PropToolFlagsPayl
     const bool host = session.role() == coop::net::Role::Host;
     if (!host && senderSlot != 0) return;
     Apply(payload, host ? "a client's toolgun" : "the host's");
-    if (host) session.SendReliable(coop::net::ReliableKind::PropToolFlags, &payload, sizeof(payload));
+    if (!host) return;
+    // To every client but the sender: an echo would put back a freeze its user has since grabbed loose.
+    for (int i = 1; i < coop::net::kMaxPeers; ++i)
+        if (i != senderSlot)
+            session.SendReliableToSlot(i, coop::net::ReliableKind::PropToolFlags, &payload, sizeof(payload));
 }
 
 }  // namespace coop::prop_tool_flags

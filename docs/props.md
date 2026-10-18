@@ -194,15 +194,18 @@ A prop let go of while it still moves stays its last toucher's until it rests, o
 element id goes on the toucher's driven-prop channel (`coop/props/prop_drive_host`): its copy simulates
 as in single player, and it streams the pose until the prop rests and ends with that pose, its flags and
 its velocity. The release says so, and a receiver holds its copy still at the release pose until the
-stream moves it, so no copy flies on its own and knocks its world's props as if that peer had thrown it.
+stream moves it, so no copy flies on its own and knocks its world's props as if that peer had thrown it;
+a promised stream that does not come within 2.5 s gives the copy its physics back. The holder's hold
+still parked on a receiver whose stream overtook the release yields to that stream.
 What the flight knocks over moves on the toucher's machine by vanilla physics, and the toucher streams
 every one of those too (Knocked props, below). A part, a door, has no element id, so it coasts on the
 held-prop stream instead: the toucher keeps streaming its pose under the hold's generation, marked as a
 coast, and sends the release once it has been still for 0.4 s (or after 20 s), with the pose it rested
 at. Every other copy is placed at each pose rather than moved, so a copy no peer simulates pushes nothing
 with no end of mass. Whoever touches it next takes it over: a use press on a streamed copy gives it its
-physics back for the grab, and the stream that drove it yields to the hand. A stream that stops for half
-a second, or a holder that switches to another prop, is an implicit release.
+physics back for the grab, and the stream that drove it yields to the hand; a reach that grabs nothing
+parks the copy again 0.4 s later, so it never drifts on its own. A stream that stops for half a second, or
+a holder that switches to another prop, is an implicit release.
 
 One prop has one holder. A copy another player holds is parked here, and the game's grab takes only a
 simulating body, so it cannot be grabbed out of their hand. Two grabs that land before either peer sees
@@ -264,8 +267,11 @@ mass, and one slid under a table threw the table across one screen while the hos
 A prop has one motion owner at a time. A claim takes the generation after every one its peer has seen
 for that prop, so the newest toucher wins on every peer: an owner whose prop arrives under another
 peer's newer generation stops streaming it and follows. Two claims under the same generation crossed in
-flight; a coin from the prop's id and both slots, the same on every peer, picks one. The host keeps each
-client's stream under its slot and relays it to the other clients (`coop/props/prop_drive_stream`).
+flight; a coin from the prop's id and both slots, the same on every peer, picks one, and the loser's end
+closes nothing. The host keeps each client's stream under its slot and relays it to the other clients
+(`coop/props/prop_drive_stream`). A closed generation shuts out late datagrams for three seconds only, so a
+joiner's or a rejoiner's first claim, which never saw the older ones, is a new stream rather than a stale
+one. A peer that leaves mid-stream gives every copy of its props its physics back.
 
 ### Who answers a hit
 
@@ -276,7 +282,9 @@ explosion), `receivedPhyiscsDamage` or `impactDamageCPP` (a physics contact), an
 on the copy answerable for the prop: the holder's while a player holds it, the host's otherwise
 (`coop/props/prop_hit_authority`). A client's own swing at a prop it does not hold is refused on its
 copy and named to the host (`PropHitIntent`), which runs the same `addDamage` on its copy within the
-sender's reach. What the damage changes crosses on the prop's record, its stream or its destroy.
+sender's reach. A prop a client's stream moves -- its throw and what it knocked -- simulates on that client
+alone, so that client's copy answers its contacts, and the host's refuses them. What the damage changes
+crosses on the prop's record, its stream or its destroy.
 `[dev] prop_hit_authority_off=1` turns the rule off.
 
 ### Power cords
@@ -288,7 +296,8 @@ has no identity on the wire, so a plug once stayed on its player's screen and le
 every other. A player's connect and disconnect now cross (`CordPlug`): the item by its key, the outlet
 by its portable key with its location as the fallback, and every other peer runs the same verb on its
 copy. A client's goes to the host, which applies it and sends it on. A cord stretched too far comes out
-on the host's copy, which sends it, and a client's own tick leaves its copy plugged. The load-time
+on the host's copy, which sends it; a client's own tick leaves its copy plugged for three seconds, and
+then pulls it and sends that. The load-time
 reconnect from the save and a dying cord's disconnect are each peer's own (`coop/props/cord_sync`).
 While a player drags a cord, its head's world pose streams at about 15 Hz, so every screen shows the
 cord running from the item to that player's hand until it goes into an outlet, or back onto the item when

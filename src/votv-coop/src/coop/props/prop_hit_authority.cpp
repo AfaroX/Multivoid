@@ -15,6 +15,8 @@
 #include "coop/props/active_drive.h"           // NowMs
 #include "coop/props/prop_key_index.h"         // Find
 #include "coop/props/remote_prop.h"            // IsActorUnderAnyDrive: another peer's hand holds it
+#include "coop/props/prop_drive_host.h"        // OwnsActor: this peer streams its motion
+#include "coop/props/prop_drive_stream.h"      // IsParked: another peer streams its motion
 
 #include "ue_wrap/actors/prop.h"               // IsDescendantOfProp, GetInteractableKeyString, GetStaticMesh
 #include "ue_wrap/core/call.h"
@@ -143,12 +145,17 @@ sg::Verdict OnDamagePre(const sg::Call& c) {
     void* local = coop::players::Registry::Get().Local();
     const bool byThisPlayer = local && ue_wrap::ufunction_hook::FrameChainRunsOn(c.stack, local);
     if (s->role() == coop::net::Role::Host) {
-        // The host answers every prop no other hand holds, and its own player's swing at one that is held.
-        if (!coop::remote_prop::IsActorUnderAnyDrive(c.object) || byThisPlayer) return sg::Verdict::Run;
-        Note(g_refusedHere, "refused: a client holds it, and its copy answers", c);
+        // The host answers every prop no other hand holds and no client's stream moves -- a client's throw
+        // and what it knocks simulate on that client alone -- and its own player's swing at either.
+        if ((!coop::remote_prop::IsActorUnderAnyDrive(c.object) && !coop::prop_drive_stream::IsParked(c.object)) ||
+            byThisPlayer)
+            return sg::Verdict::Run;
+        Note(g_refusedHere, "refused: a client holds or streams it, and its copy answers", c);
         return sg::Verdict::Cancel;
     }
     if (c.object == coop::local_streams::LastHeldActor()) return sg::Verdict::Run;   // the holder's copy
+    // A prop this client set moving simulates here alone, so its contacts are felt here alone.
+    if (c.tag != kTagAdd && coop::prop_drive_host::OwnsActor(c.object)) return sg::Verdict::Run;
     if (c.tag == kTagAdd && byThisPlayer) {
         Forward(s, c);
         return sg::Verdict::Cancel;

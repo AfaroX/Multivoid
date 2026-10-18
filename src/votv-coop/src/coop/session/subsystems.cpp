@@ -458,6 +458,7 @@ void DisconnectSlot(coop::net::Session& session, int slot) {
     coop::floppy_slot_sync::OnPeerGone(static_cast<uint8_t>(slot));
     coop::media_pool::OnPeerGone(static_cast<uint8_t>(slot));
     coop::media_playback::OnPeerGone(static_cast<uint8_t>(slot));
+    coop::prop_drive_stream::OnPeerGone(slot);  // the props that peer streamed get their physics back here
     coop::dish_hashcode_sync::OnPeerGone(static_cast<uint8_t>(slot));
     coop::sat_console_sync::OnPeerGone(static_cast<uint8_t>(slot));  // its terminal kept, running its command, for its return
     coop::daily_task_sync::OnPeerGone(static_cast<uint8_t>(slot));  // a departed slot is owed no task

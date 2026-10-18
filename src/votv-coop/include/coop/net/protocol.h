@@ -1917,7 +1917,8 @@ struct CordPlugPayload {
     WireKey  item;        // 32 -- the corded item's save Key; len=0 -> resolve by eid
     uint32_t elementId;   // 4  -- its Element id, 0 = none
     uint8_t  plugged;     // 1  -- 1 = into `socket`, 0 = out, 2 = out and dragged, its head at s* / h*
-    uint8_t  _pad[3];     // 3  -- zeroed
+    uint8_t  snapshot;    // 1  -- 1: the host's join snapshot, which a joiner holds against its save's reconnect
+    uint8_t  _pad[2];     // 2  -- zeroed
     WireKey  socket;      // 32 -- the outlet's portable key; len=0 when not plugged
     float    sx, sy, sz;  // 12 -- the outlet's world location, or a dragged head's
     float    hp, hy, hr;  // 12 -- a dragged head's world rotation; zero otherwise

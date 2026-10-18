@@ -72,7 +72,7 @@ void OnHitPost(const sg::Call& c) {
     // A prop with no element id has no copy a peer could move -- a client's drop the host spawned this
     // very tick, before its id is minted, is the usual one -- so its knock is no news.
     const coop::element::ElementId eid = coop::element::Registry::Get().EidForActor(prop);
-    if (eid == coop::element::kInvalidId || eid == 0u) return;
+    if (eid == coop::element::kInvalidId || eid == 0u) return;   // the channel names it by its wire id
     // Refused there for a prop in a hand; a prop already streaming restarts its rest clock.
     coop::prop_drive_host::Coast(prop, "knock");
     ++g_knocks;

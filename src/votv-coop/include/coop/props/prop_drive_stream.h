@@ -17,6 +17,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <cstdint>
 
 namespace coop::net {
 class Session;
@@ -40,6 +41,16 @@ bool IsParked(void* actor);
 // Register the use-press observer that hands a prop still under the host's stream to this player's grab.
 // Idempotent; retried until mainPlayer_C is loaded. Game thread.
 void InstallGrabYield();
+
+// A holder's release said it streams the prop's flight: the copy is parked now, before the first pose, so it
+// does not fly here on its own; a placeholder that no pose follows gives the physics back. Game thread.
+void ExpectStream(void* actor, uint32_t eid, int ownerSlot);
+
+// This peer just claimed `eid` under `gen`: the older streams of it are closed here. Game thread.
+void NoteOwnClaim(uint32_t eid, uint8_t gen);
+
+// A peer left: the props it streamed get their physics back here. Game thread.
+void OnPeerGone(int slot);
 
 // Session end: every driven prop gets its physics back. Game thread.
 void OnDisconnect();

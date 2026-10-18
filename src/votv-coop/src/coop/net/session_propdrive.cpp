@@ -98,6 +98,13 @@ void Session::StoreRemotePropDriveBatch(int routeSlot, int peerSlot, const void*
     }
     {
         std::lock_guard<std::mutex> lk(remoteMutex_);
+        // On a client, a relayed origin's batch counts only for the slot's current occupancy, as the other
+        // relayed streams do: a leaver's late batch would latch the store at a seq its successor's start below.
+        if (role() == Role::Client && routeSlot != 0) {
+            PacketHeader h;
+            std::memcpy(&h, data, sizeof(h));
+            if (!originContext_.Accepts(routeSlot, h.originContext)) return;
+        }
         origin_[routeSlot].propDrive.Merge(batch, count, seq);
     }
     if (role() == Role::Host) RelayUnreliableToOtherClients(peerSlot, data, len);
