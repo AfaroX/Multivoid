@@ -1019,6 +1019,12 @@ enum class ReliableKind : uint8_t {
     // play state and position; client to host, the intent of a press this client's player made on one.
     // BlobChunkPayload, head [u8 op]. Never relayed. Late join: every playing device at world-ready.
     MediaPlay = 178,
+
+    // An item's power cord went into an outlet or came out of one (coop/props/cord_sync). Either peer
+    // to the host, the host to all: the item by key, the outlet by its portable key and location.
+    // Relayed by the host after it applies it. Late join: every corded item's cord at world-ready.
+    // Trust: the receiver runs the game's own connect and disconnect on its copy. CordPlugPayload.
+    CordPlug = 179,
 };
 
 #pragma pack(push, 1)
@@ -1890,6 +1896,19 @@ struct FireExtRupturePayload {
     uint32_t _pad;       // 4  -- zeroed
 };
 static_assert(sizeof(FireExtRupturePayload) == 40, "FireExtRupturePayload must be 40 bytes");
+
+// An item's power cord in or out of an outlet (CordPlug): the item by key, the eid as the keyless
+// fallback; the outlet by its portable key (coop/element/portable_identity), its location the
+// fallback for a receiver that names it otherwise.
+struct CordPlugPayload {
+    WireKey  item;        // 32 -- the corded item's save Key; len=0 -> resolve by eid
+    uint32_t elementId;   // 4  -- its Element id, 0 = none
+    uint8_t  plugged;     // 1  -- 1 = into `socket`, 0 = out
+    uint8_t  _pad[3];     // 3  -- zeroed
+    WireKey  socket;      // 32 -- the outlet's portable key; len=0 when unplugged
+    float    sx, sy, sz;  // 12 -- the outlet's world location
+};
+static_assert(sizeof(CordPlugPayload) == 84, "CordPlugPayload must be 84 bytes");
 
 // A client player's hit on a prop (PropHitIntent): the prop by key, the eid as the keyless fallback, and the
 // swing's own addDamage arguments the host re-runs it with.

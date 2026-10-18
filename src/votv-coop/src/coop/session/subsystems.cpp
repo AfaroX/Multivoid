@@ -142,6 +142,7 @@
 #include "coop/props/knock_stream.h"
 #include "coop/props/prop_hit_authority.h"
 #include "coop/media/media_frames.h"
+#include "coop/props/cord_sync.h"
 #include "coop/media/media_playback.h"
 #include "coop/media/media_pool.h"
 #include "coop/props/record_sync.h"
@@ -254,6 +255,7 @@ void Install(coop::net::Session& session) {
     coop::media_pool::Install(&session);       // the shared media pool: files every player gets a copy of
     coop::media_frames::Install(&session);     // a frame's or a poster's chosen image on every screen
     coop::media_playback::Install(&session);   // a TV or a radio plays the host's link at the host's point
+    coop::cord_sync::Install(&session);        // an item's cord is in the same outlet on every screen
     coop::props::prop_food_state::Install();  // the food family claims its own live state off the record lane
     coop::desk_cursor_sync::Install(&session);  // coords-panel live-cursor unreliable motion stream (interpolated mirror)
     coop::desk_input_sync::Install(&session);  // the claim-free field-granular desk input lane
@@ -410,6 +412,7 @@ void ConnectReplayForSlot(int slot) {
     coop::server_upgrade_sync::QueueConnectBroadcastForSlot(slot);  // every box's upgrade level
     coop::media_pool::QueueConnectBroadcastForSlot(slot);      // the pool: the joiner fetches what it lacks
     coop::media_playback::QueueConnectBroadcastForSlot(slot);  // every TV and radio with a link, at its point
+    coop::cord_sync::QueueConnectBroadcastForSlot(slot);       // every corded item's cord, in or out
     coop::floppy_slot_sync::QueueConnectBroadcastForSlot(slot);  // every device slot, the laptop's file quad behind the laptop's: the joiner's world came from a save frozen before the first insert
     coop::hook_anchor::QueueConnectBroadcastForSlot(slot);  // anchored hooks the joiner's save capture missed; it dedups by key
     coop::roach_sync::QueueConnectBroadcastForSlot(slot);  // current roach population to the joiner
@@ -572,6 +575,7 @@ DisconnectStats DisconnectAll() {
     coop::props::prop_hit_authority::OnDisconnect();
     coop::media_pool::OnDisconnect();
     coop::media_playback::OnDisconnect();
+    coop::cord_sync::OnDisconnect();
     coop::laptop_sync::OnDisconnect();
     coop::portable_pc_lid::OnDisconnect();
     coop::laptop_buffer_sync::OnDisconnect();  // quad shadow + assembler
@@ -686,7 +690,7 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:device_occupancy"}; coop::device_occupancy::Tick(); }  // device occupancy: activeInterface edge poll + pending claim retry
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:console_state"}; coop::console_state_sync::Tick(); }  // signal-catcher: host sky poll / client mirror sweep / desk + dish owner streams
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:signal_catch"}; coop::signal_catch_sync::Tick(); }  // the catch and cleared detectors, 1 Hz
-    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:propsave"}; coop::prop_save_data::Drive(); coop::props::record_sync::Tick(); coop::props::knock_stream::Tick(); coop::props::prop_hit_authority::Tick(); coop::media_pool::Tick(); coop::media_frames::Tick(); coop::media_playback::Tick(); }  // budgeted park applies; records sent on change + the 1 Hz assembler sweep
+    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:propsave"}; coop::prop_save_data::Drive(); coop::props::record_sync::Tick(); coop::props::knock_stream::Tick(); coop::props::prop_hit_authority::Tick(); coop::media_pool::Tick(); coop::media_frames::Tick(); coop::media_playback::Tick(); coop::cord_sync::Tick(); }  // budgeted park applies; records sent on change + the 1 Hz assembler sweep
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:laptop"}; coop::laptop_sync::Tick(); }  // PC power edge poll (4 Hz)
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:pc_lid"}; coop::portable_pc_lid::Tick(); }  // the lid's watch until live, then waiting lines and held edges (1 Hz while any)
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:laptop_quad"}; coop::laptop_buffer_sync::Tick(); }  // quad int pre-filter poll (4 Hz)

@@ -135,6 +135,7 @@ constexpr ClientAuthorship AuthorshipOf(ReliableKind k) {
     case ReliableKind::MediaPool:
     case ReliableKind::MediaChunk:
     case ReliableKind::MediaPlay:
+    case ReliableKind::CordPlug:
         return ClientAuthorship::Client;
     case ReliableKind::EntitySpawn:
     case ReliableKind::EntityDestroy:

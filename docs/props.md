@@ -251,6 +251,19 @@ copy and named to the host (`PropHitIntent`), which runs the same `addDamage` on
 sender's reach. What the damage changes crosses on the prop's record, its stream or its destroy.
 `[dev] prop_hit_authority_off=1` turns the rule off.
 
+### Power cords
+
+A corded item (`prop_corded_C`: a TV, a monitor, a lamp) spawns its cord (`cord_C`) as a child actor,
+and the cord's own verbs plug it: `connect(socket, load)` puts its head in an outlet (`cordSocket_C`)
+and powers the item through the outlet's `cordPlugged`, and `disconnect()` takes it out. A child actor
+has no identity on the wire, so a plug once stayed on its player's screen and left the item unpowered on
+every other. A player's connect and disconnect now cross (`CordPlug`): the item by its key, the outlet
+by its portable key with its location as the fallback, and every other peer runs the same verb on its
+copy. A client's goes to the host, which applies it and sends it on. A cord stretched too far comes out
+on the host's copy, which sends it, and a client's own tick leaves its copy plugged. The load-time
+reconnect from the save and a dying cord's disconnect are each peer's own (`coop/props/cord_sync`).
+A cord a player is dragging shows in its player's hand on their screen only.
+
 ### Sticking to a wall
 
 A prop sticks through its wall-attach component, which the wall-attachable props (the cameras, the
@@ -325,6 +338,7 @@ and not the burst's spray or sound, which run in the ruptured copy's own tick.
 | a prop a hook drags, and one still sliding after the hook lets go | the host | a per-tick stream while it moves; the end edge hands the velocity back |
 | a prop's key | the game, once; the host's copy wins on a mirror | never rewritten on the owner |
 | container contents | the host | slices of its object array; an extraction is an intent |
+| an item's power cord | the peer that plugs or unplugs it; the host for a cord stretched out | one reliable message; every peer runs the cord's own verb |
 | a stuck prop, and its unstick | the peer that sticks or frees it; every peer runs the component's own verb | one reliable message |
 | a self-changing prop's progression | the host | park, corrector or anchor, per prop |
 | a client's shared-world spawners | the host | refused on a client at the script-body gate; shared-world content arrives only from the host |
@@ -344,6 +358,7 @@ and not the burst's spray or sound, which run in the ruptured copy's own tick.
 | `ContainerState`, `ContainerContents` | the presser; the host | open or closed; one slice of the host's object array |
 | `InventoryPickup` | each peer, relayed | the pocket blip, so others hear a pickup |
 | `PropHitIntent` | a client to the host | its player's swing at a prop it does not hold: the prop, the amount, the impact point and vector |
+| `CordPlug` | either peer to the host, the host to all | an item's cord in or out: the item, and the outlet's portable key and location |
 
 ## Late join
 
@@ -361,7 +376,8 @@ world is ready, since the release and the end edge that close them are not sent 
 not ready either: a prop held at the join resolves on the first pose after it, and at the ready edge
 the host re-sends every driven prop's pose, the resting ones included, which the delta gate would
 otherwise never send. An end edge that reaches a joiner before the prop it names is kept until the
-prop resolves.
+prop resolves. The host sends every corded item's cord, in or out, at the ready edge, and the joiner
+holds that for twenty seconds against the save's delayed reconnect.
 
 ## Known limits
 
@@ -389,6 +405,7 @@ prop resolves.
 | the receivers | `coop/props/remote_prop` (held), `coop/props/remote_prop_spawn` (birth: adopt, converge, create), `coop/props/prop_fresh_spawn` (the materialiser), `coop/props/prop_wire_parity`, `coop/props/active_drive`, `coop/props/prop_sound` |
 | a client's intents | `coop/props/prop_drop_intent` |
 | the stick | `coop/props/prop_stick_sync` |
+| power cords | `coop/props/cord_sync` |
 | a prop under a hook's drive or a broom's push | `coop/props/prop_drive_host` (the host's set and stream), `coop/props/prop_drive_stream` (the receiver), `coop/items/hook_prop_claim` (the hook lane feeding it), `coop/items/hook_constraint` (the tie itself, host-only), `coop/items/broom_push` (the broom's push feeding it) |
 | containers | `coop/props/container_contents_sync`, `coop/items/save_record_wire`, `coop/interactables/interactable_sync` |
 | a record that changes in place | `coop/props/prop_record_refresh` (the drive box, the reel case) |
