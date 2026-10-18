@@ -137,6 +137,7 @@ constexpr ClientAuthorship AuthorshipOf(ReliableKind k) {
     case ReliableKind::MediaPlay:
     case ReliableKind::CordPlug:
     case ReliableKind::PropToolFlags:
+    case ReliableKind::WallPoster:
     case ReliableKind::PropDriveEnd:      // the end of a stream the sender ran; relayed
         return ClientAuthorship::Client;
     case ReliableKind::EntitySpawn:

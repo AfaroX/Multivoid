@@ -1,6 +1,7 @@
 // coop/media/media_pool.cpp -- see coop/media/media_pool.h.
 
 #include "coop/media/media_pool.h"
+#include "coop/props/wall_poster_sync.h"  // RefreshPictures
 
 #include "coop/net/blob_chunks.h"
 #include "coop/net/session.h"
@@ -403,6 +404,7 @@ void RefreshImages() {
     int n = 0;
     for (const auto& e : entries)
         if (e.actor && CA::IsImageProp(e.actor) && CA::RefreshImage(e.actor)) ++n;
+    coop::wall_poster_sync::RefreshPictures();   // the posters on the walls are no props
     UE_LOGI("media_pool: re-imported the asset folder; %d picture frame(s) and poster(s) looked up their image again", n);
 }
 

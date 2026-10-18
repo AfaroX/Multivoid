@@ -56,7 +56,9 @@ client's state to everyone else and sends every device's last state to a joiner 
 position further from where play would have put it than a second and a half is a scrub, and goes out at
 once. Every other peer, the host included, follows: it opens the same link, follows the play state, seeks
 when it drifts past two seconds, and takes the volume (a TV's `audioVolume`, the radio's sound's volume
-multiplier) and the brightness. A local file's link is sent relative to the asset folder (`@assets:`) and
+multiplier), the brightness and the playlist order -- `playmode` (one on loop, in order, at random,
+shuffled) and `playIndex`, where the order stands -- so whoever owns the device next rolls on in the same
+order from the same place. A local file's link is sent relative to the asset folder (`@assets:`) and
 rebuilt from the receiver's own, since the absolute path names each machine's user; a peer the pool has
 not brought the file to yet opens it once it lands and seeks to where the owner is, so nobody's download
 holds the owner's screen back.
@@ -75,7 +77,7 @@ who leaves frees what they held and hands what they owned to the host. `fin` run
 | the pool | the host | the list on each change; a client's share and requests are intents |
 | a pooled file | its sharer, then the host | pieces from the host's disk to whoever asks |
 | a frame's or a poster's image | the host at rest, the picking client for a moment | the prop's save record |
-| what a TV or a radio plays | its last user; the host keeps who | the link, the play state, the position, the volume and the brightness |
+| what a TV or a radio plays | its last user; the host keeps who | the link, the play state, the position, the volume, the brightness and the playlist order |
 | who is using a TV or a radio | the host | a claim when the interface opens, a release when it closes |
 
 ## Wire messages
@@ -84,7 +86,7 @@ who leaves frees what they held and hands what they owned to the host. `fin` run
 |---|---|---|
 | `MediaPool` | host to all; client to host; host to one client | the pool; a share, a removal or a request for a file |
 | `MediaChunk` (bulk, Media lane) | either direction, to the asker | one piece of a pooled file |
-| `MediaPlay` | host to all; client to host | a device's owner, holder, link, play state, position, volume and brightness; a client's claim or release |
+| `MediaPlay` | host to all; client to host | a device's owner, holder, link, play state, position, volume, brightness and playlist order; a client's claim or release |
 
 ## Known limits
 

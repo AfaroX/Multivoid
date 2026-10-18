@@ -1033,6 +1033,12 @@ enum class ReliableKind : uint8_t {
     // applies it. Late join: the flags reach a joiner with the prop's snapshot row and its save.
     // PropToolFlagsPayload.
     PropToolFlags = 180,
+
+    // A wall poster (poster_C, an actor_save_C) went up, came down or changed picture
+    // (coop/props/wall_poster_sync). Either peer to the host, the host to every other: its Key, and for a
+    // put-up its class, type, index, picture and transform. Relayed by the host after it applies it. Late
+    // join: every wall poster at world-ready; a joiner keeps the ones its save has. WallPosterPayload.
+    WallPoster = 181,
 };
 
 #pragma pack(push, 1)
@@ -1936,6 +1942,21 @@ struct PropToolFlagsPayload {
     float    pitch, yaw, roll;     // 12
 };
 static_assert(sizeof(PropToolFlagsPayload) == 64, "PropToolFlagsPayload must be 64 bytes");
+
+// A wall poster (WallPoster): op 1 put up, 2 taken down, 3 a new picture; the poster by its actor_save Key.
+struct WallPosterPayload {
+    uint8_t       op;                 // 1
+    uint8_t       custom;             // 1  -- the picture is a player's own file
+    uint8_t       fileLen;            // 1  -- bytes of `file`
+    uint8_t       _pad;               // 1
+    WireKey       key;                // 32
+    WireClassName cls;                // 64 -- the poster's class (put up only)
+    int32_t       type, index;        // 8  -- the game's own poster picks (put up only)
+    float         x, y, z;            // 12
+    float         pitch, yaw, roll;   // 12
+    char          file[64];           // 64 -- the picture's file name, UTF-8
+};
+static_assert(sizeof(WallPosterPayload) == 196, "WallPosterPayload must be 196 bytes");
 
 // A client player's hit on a prop (PropHitIntent): the prop by key, the eid as the keyless fallback, and the
 // swing's own addDamage arguments the host re-runs it with.

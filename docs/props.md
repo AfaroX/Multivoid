@@ -312,6 +312,18 @@ four flags and the prop's pose at that moment; every other peer puts its copy at
 same setter, so a prop frozen mid-air hangs at the same place on every screen. A client's goes to the
 host, which applies it and sends it on (`coop/props/prop_tool_flags`).
 
+### Posters on the wall
+
+A held poster (`prop_poster_C`) goes up with its own `put`: it spawns the wall poster its `posterClass`
+names (`poster_C`, an `actor_save_C` -- a saved world object, not a prop) at the decal's transform, with
+its type, index, picture and custom flag, and destroys itself. The prop's destroy crossed and the wall
+poster never did, so the other player saw the poster leave the hand and go up nowhere. The wall poster
+born inside `put` now crosses (`WallPoster`) with its class, its actor_save Key -- minted if the game left
+it none -- those fields and its transform, and every other peer spawns the same one under the same Key
+before its BeginPlay. Taking it down (its use, which hands the prop back and destroys it) and a new
+picture cross by that Key; a custom picture goes in the media pool. The host relays a client's and sends
+every wall poster to a joiner, which keeps the ones its save already has (`coop/props/wall_poster_sync`).
+
 ### Sticking to a wall
 
 A prop sticks through its wall-attach component, which the wall-attachable props (the cameras, the
@@ -409,6 +421,7 @@ and not the burst's spray or sound, which run in the ruptured copy's own tick.
 | `PropHitIntent` | a client to the host | its player's swing at a prop it does not hold: the prop, the amount, the impact point and vector |
 | `CordPlug` | either peer to the host, the host to all | an item's cord in or out, or its dragged head: the item, and the outlet's portable key and location or the head's pose |
 | `PropToolFlags` | either peer to the host, the host to all | a toolgun's flags on a prop: the prop, static, frozen, active and sleeping, and its pose |
+| `WallPoster` | either peer to the host, the host to every other | a wall poster put up (class, Key, type, index, picture, transform), taken down, or given a new picture |
 
 ## Late join
 
@@ -454,6 +467,7 @@ holds that for twenty seconds against the save's delayed reconnect.
 | the stick | `coop/props/prop_stick_sync` |
 | power cords | `coop/props/cord_sync` |
 | the toolgun's freeze | `coop/props/prop_tool_flags` |
+| posters on the wall | `coop/props/wall_poster_sync` |
 | a parent's parts, by their portable key | `coop/props/part_index` |
 | a prop under a hook's drive or a broom's push | `coop/props/prop_drive_host` (the host's set and stream), `coop/props/prop_drive_stream` (the receiver), `coop/items/hook_prop_claim` (the hook lane feeding it), `coop/items/hook_constraint` (the tie itself, host-only), `coop/items/broom_push` (the broom's push feeding it) |
 | containers | `coop/props/container_contents_sync`, `coop/items/save_record_wire`, `coop/interactables/interactable_sync` |

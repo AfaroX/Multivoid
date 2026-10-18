@@ -68,6 +68,8 @@ struct State {
     uint32_t openSeq = 0;
     int64_t timeMs = 0;
     float volume = -1.f, brightness = -1.f;   // negative: not known
+    uint8_t playmode = 0xFF;                  // the playlist order (loop, in order, random, shuffle); 0xFF: not known
+    int32_t playIndex = -1;                   // where the order stands
 };
 
 struct Dev {
@@ -220,6 +222,8 @@ void PutState(std::vector<uint8_t>& b, const std::wstring& key, const Dev& d) {
     PutU64(b, static_cast<uint64_t>(d.st.timeMs < 0 ? 0 : d.st.timeMs));
     PutF32(b, d.st.volume);
     PutF32(b, d.st.brightness);
+    PutU8(b, d.st.playmode);
+    PutU32(b, static_cast<uint32_t>(d.st.playIndex));
 }
 
 // The states of `keys` (every known device when empty): from the host to a slot or every peer, from a
@@ -404,6 +408,15 @@ void OwnerPoll(coop::net::Session* s, uint64_t now) {
         float v = -1.f, br = -1.f;
         if (MD::ReadVolume(actor, v) && std::fabs(v - d.st.volume) > 0.005f) { d.st.volume = v; d.dirty = true; }
         if (MD::ReadBrightness(actor, br) && std::fabs(br - d.st.brightness) > 0.005f) { d.st.brightness = br; d.dirty = true; }
+        // The playlist order: the owner's copy rolls what plays next (`fin`), and the next owner rolls on
+        // in the same order from the same place.
+        uint8_t mode = 0;
+        int32_t index = 0;
+        if (MD::ReadPlaylist(actor, mode, index) && (mode != d.st.playmode || index != d.st.playIndex)) {
+            d.st.playmode = mode;
+            d.st.playIndex = index;
+            d.dirty = true;
+        }
         if (!d.have) {
             // Nothing plays yet, but the interface is open: the holder's word to the host that it is there.
             if (open && !IsHost(s) && now - d.sentMs >= kBeatMs) {
@@ -479,6 +492,11 @@ void FollowerApply(coop::net::Session* s, uint64_t now) {
         if (d.st.volume >= 0.f && MD::ReadVolume(actor, v) && std::fabs(v - d.st.volume) > 0.01f) MD::WriteVolume(actor, d.st.volume);
         if (d.st.brightness >= 0.f && MD::ReadBrightness(actor, v) && std::fabs(v - d.st.brightness) > 0.01f)
             MD::WriteBrightness(actor, d.st.brightness);
+        uint8_t mode = 0;
+        int32_t index = 0;
+        if (d.st.playmode != 0xFF && MD::ReadPlaylist(actor, mode, index) &&
+            (mode != d.st.playmode || index != d.st.playIndex))
+            MD::WritePlaylist(actor, d.st.playmode, d.st.playIndex);
         void* player = MD::PlayerOf(actor);
         if (!player || now - d.openedMs < kSettleMs || now - d.commandMs < 500) continue;
         bool preparing = false;
@@ -613,6 +631,8 @@ void OnChunk(const coop::net::BlobChunkPayload& p, uint8_t senderSlot) {
             st.timeMs = static_cast<int64_t>(r.U64());
             st.volume = r.F32();
             st.brightness = r.F32();
+            st.playmode = r.U8();
+            st.playIndex = static_cast<int32_t>(r.U32());
             if (!r.ok || key.empty()) break;
             Dev* d = DevFor(key);
             if (!d) continue;

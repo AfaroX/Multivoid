@@ -39,6 +39,7 @@
 #include "coop/interactables/upgrade_sync.h"  // CLIENT->HOST upgrade purchase
 #include "coop/props/cord_sync.h"
 #include "coop/props/prop_tool_flags.h"
+#include "coop/props/wall_poster_sync.h"
 #include "coop/props/trash_channel.h"
 
 #include "ue_wrap/core/log.h"
@@ -408,6 +409,22 @@ bool HandleIntentEvent(net::Session& session,
         net::CordPlugPayload p{};
         std::memcpy(&p, msg.payload, sizeof(p));
         coop::cord_sync::OnCordPlug(session, p, static_cast<uint8_t>(msg.senderPeerSlot));
+        break;
+    }
+    case net::ReliableKind::WallPoster: {
+        // A wall poster up, down or repainted: a client's to the host, which applies and relays it; the host's
+        // to every client.
+        const bool fromHost = msg.senderPeerSlot == 0;
+        if (msg.payloadLen < sizeof(net::WallPosterPayload) || msg.senderPeerSlot < 0 ||
+            msg.senderPeerSlot >= net::kMaxPeers || fromHost == (session.role() == net::Role::Host)) {
+            UE_LOGW("event_feed: WallPoster dropped (role, sender slot %d or length %zu)", msg.senderPeerSlot,
+                    static_cast<size_t>(msg.payloadLen));
+            break;
+        }
+        net::WallPosterPayload p{};
+        std::memcpy(&p, msg.payload, sizeof(p));
+        if (p.fileLen > sizeof(p.file) || p.cls.len > sizeof(p.cls.data) || p.key.len > sizeof(p.key.data)) break;
+        coop::wall_poster_sync::OnWallPoster(session, p, static_cast<uint8_t>(msg.senderPeerSlot));
         break;
     }
     case net::ReliableKind::PropToolFlags: {

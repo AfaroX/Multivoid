@@ -239,6 +239,26 @@ bool WriteBrightness(void* device, float v) {
     return UpdProperties(device);
 }
 
+bool ReadPlaylist(void* device, uint8_t& mode, int32_t& index) {
+    if (KindOf(device) == Kind::None) return false;
+    static R::InstanceOffset sMode(L"playmode"), sIndex(L"playIndex");
+    const int32_t m = sMode.Of(device), i = sIndex.Of(device);
+    if (m < 0 || i < 0) return false;
+    mode = static_cast<const uint8_t*>(device)[m];
+    std::memcpy(&index, static_cast<const uint8_t*>(device) + i, sizeof(index));
+    return true;
+}
+
+bool WritePlaylist(void* device, uint8_t mode, int32_t index) {
+    if (KindOf(device) == Kind::None) return false;
+    static R::InstanceOffset sMode(L"playmode"), sIndex(L"playIndex");
+    const int32_t m = sMode.Of(device), i = sIndex.Of(device);
+    if (m < 0 || i < 0) return false;
+    static_cast<uint8_t*>(device)[m] = mode;
+    std::memcpy(static_cast<uint8_t*>(device) + i, &index, sizeof(index));
+    return true;
+}
+
 void* DeviceOfInterface(void* widget) {
     static R::InstanceOffset sOff(L"radio");
     void* d = ObjectAt(widget, sOff);

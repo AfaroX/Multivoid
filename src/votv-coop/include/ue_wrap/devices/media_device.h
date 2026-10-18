@@ -50,4 +50,10 @@ bool WriteBrightness(void* device, float v);
 // The device an interface widget (ui_tvInterface_C, ui_radioInterface_C) shows, from its `radio` member.
 void* DeviceOfInterface(void* widget);
 
+// The device's playlist order, `playmode` (enum_playlist: one on loop, in order, at random, shuffled), and
+// `playIndex`, where its order stands -- what its `fin` reads to pick what plays next. A plain field write;
+// the interface shows the mode it reads. Game thread.
+bool ReadPlaylist(void* device, uint8_t& mode, int32_t& index);
+bool WritePlaylist(void* device, uint8_t mode, int32_t index);
+
 }  // namespace ue_wrap::media_device
