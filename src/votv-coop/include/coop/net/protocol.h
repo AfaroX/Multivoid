@@ -1954,9 +1954,10 @@ struct WallPosterPayload {
     int32_t       type, index;        // 8  -- the game's own poster picks (put up only)
     float         x, y, z;            // 12
     float         pitch, yaw, roll;   // 12
-    char          file[64];           // 64 -- the picture's file name, UTF-8
+    char          file[96];           // 96 -- the picture's file name, UTF-8 (a longer one goes by the pool's hash)
 };
-static_assert(sizeof(WallPosterPayload) == 196, "WallPosterPayload must be 196 bytes");
+static_assert(sizeof(WallPosterPayload) == 228, "WallPosterPayload must be 228 bytes");
+static_assert(sizeof(WallPosterPayload) <= 256 - 20 - 8, "WallPosterPayload must fit in one reliable datagram");
 
 // A client player's hit on a prop (PropHitIntent): the prop by key, the eid as the keyless fallback, and the
 // swing's own addDamage arguments the host re-runs it with.

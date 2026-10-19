@@ -20,6 +20,7 @@
 #include "coop/props/container_contents_sync.h"  // TakeObjInFlight -- mark a container-extraction birth
 #include "coop/props/container_birth.h"           // a thrown container's birth slice
 #include "coop/session/world_load_episode.h"  // InEpisode (quiet during the join loadObjects churn)
+#include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/call.h"                   // ParamFrame + Call (setKey on the host re-spawn)
 #include "ue_wrap/engine/engine.h"                 // BeginDeferredSpawn/FinishDeferredSpawn/SetActorScale3D
 #include "ue_wrap/core/fname_utils.h"            // StringToFName
@@ -51,6 +52,7 @@
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
+#include <map>
 #include <vector>
 
 namespace coop::prop_drop_intent {
@@ -152,8 +154,9 @@ void NoteAuthored(const std::wstring& key, void* actor) {
 // A place that leaves the hand moving -- a throw from the hand slot -- carries only a transform on its
 // intent, so the host built its copy standing still at the hand and streamed it falling there, and this
 // client's own copy, mid-flight, was pulled back to it. The flight is the thrower's: the intent is
-// followed on the same FIFO by the release the held-prop lane already speaks, keyed and closing no hold,
-// with the actor's pose and velocity, so the host's copy flies the same throw from its first tick.
+// followed by the release the held-prop lane already speaks, keyed and closing no hold, with the actor's
+// pose and velocity, so the host's copy flies the same throw. The release rides the Normal lane and the
+// intent Bulk, so the release can come first: the host keeps it (StashFlight) until the intent spawns.
 constexpr float kFlightMinSpeedCmS = 1.0f;   // a resting place has nothing to hand over
 
 void SendFlight(coop::net::Session* s, void* actor, const coop::net::WireKey& key,
@@ -173,6 +176,32 @@ void SendFlight(coop::net::Session* s, void* actor, const coop::net::WireKey& ke
     rel.hasPose = 1;
     s->SendPropRelease(rel);   // elementId 0 and holdGen 0: a keyed release that closes no hold
     UE_LOGI("[PROP-DROP] CLIENT handed the host its flight: |v|=%.1f cm/s", sp);
+}
+
+// HOST: a thrown place's flight that came ahead of its intent, by key, until the intent spawns the prop.
+struct Flight { coop::net::PropReleasePayload rel; uint64_t atMs = 0; };
+std::map<std::wstring, Flight> g_flights;
+constexpr uint64_t kFlightKeepMs = 5000;
+constexpr size_t kMaxFlights = 64;
+// HOST: props the intent just spawned whose stashed flight goes on two ticks later, past the save record
+// that follows the intent and would put the body back at rest.
+struct Fly { ue_wrap::CachedObjRef actor; coop::net::PropReleasePayload rel; int ticks = 0; };
+std::vector<Fly> g_fly;
+
+void FlyStashed() {
+    for (auto it = g_fly.begin(); it != g_fly.end();) {
+        if (++it->ticks < 2) { ++it; continue; }
+        if (void* actor = it->actor.Get()) {
+            void* mesh = ue_wrap::prop::GetStaticMesh(actor);
+            if (mesh && ue_wrap::engine::IsComponentSimulatingPhysics(mesh)) {
+                const coop::net::PropReleasePayload& r = it->rel;
+                ue_wrap::engine::SetComponentLinearVelocity(mesh, r.linVelX, r.linVelY, r.linVelZ);
+                ue_wrap::engine::SetComponentAngularVelocity(mesh, r.angVelX, r.angVelY, r.angVelZ);
+                UE_LOGI("[PROP-DROP] HOST flew a placed prop's throw that came ahead of its intent");
+            }
+        }
+        it = g_fly.erase(it);
+    }
 }
 
 // Fill a fixed-size wire short string (the key and class-name fields share the shape).
@@ -434,6 +463,7 @@ void Install(coop::net::Session* session) {
 
 void Tick(coop::net::Session* session) {
     UE_ASSERT_GAME_THREAD("prop_drop_intent::Tick");
+    if (!g_fly.empty()) FlyStashed();
     if (g_pending.empty()) return;
     if (!session || !session->connected() || session->role() != coop::net::Role::Client) {
         // Tally these before dropping them: an entry discarded here is one the seam accepted and
@@ -649,6 +679,16 @@ void OnPropDropIntent(coop::net::Session& session, const coop::net::PropDropInte
     void* actor = HostSpawnPlacedProp(p, cls, key, senderSlot);
     // A data drive the client brought in: its row, which only that client has, is the one the host takes for it.
     if (actor) coop::drive_payload_sync::NoteClientBrought(actor, senderSlot);
+    // A throw whose release came first: its flight goes on once the record behind this intent has landed.
+    auto fl = g_flights.find(key);
+    if (fl != g_flights.end()) {
+        if (actor && NowMs() - fl->second.atMs < kFlightKeepMs) {
+            g_fly.emplace_back();
+            g_fly.back().actor.Set(actor);
+            g_fly.back().rel = fl->second.rel;
+        }
+        g_flights.erase(fl);
+    }
     if (actor) {
         UE_LOGI("[PROP-DROP] HOST spawned client-placed prop key='%ls' cls='%ls' slot=%u at (%.1f,%.1f,%.1f) "
                 "-- FinishSpawn watcher broadcasts it this tick",
@@ -716,9 +756,21 @@ void OnReelEjectIntent(coop::net::Session& session, const coop::net::PropDropInt
     OnPropDropIntent(session, p, senderSlot);  // same author: dup-guard + HostSpawnPlacedProp
 }
 
+void StashFlight(const std::wstring& key, const coop::net::PropReleasePayload& rel) {
+    UE_ASSERT_GAME_THREAD("prop_drop_intent::StashFlight");
+    if (key.empty()) return;
+    const uint64_t now = NowMs();
+    for (auto it = g_flights.begin(); it != g_flights.end();)
+        it = now - it->second.atMs >= kFlightKeepMs ? g_flights.erase(it) : std::next(it);
+    if (g_flights.size() >= kMaxFlights && !g_flights.count(key)) return;
+    g_flights[key] = Flight{rel, now};
+}
+
 void Reset() {
     UE_ASSERT_GAME_THREAD("prop_drop_intent::Reset");
     g_inFlight.clear();
+    g_flights.clear();
+    g_fly.clear();
     // The drain's session gate normally empties this first; anything still here reached teardown
     // unresolved, and the tally says so rather than losing it.
     for (const PendingPlace& e : g_pending)

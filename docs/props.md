@@ -115,9 +115,11 @@ performs (`coop/props/prop_drop_intent`):
 - **A place that leaves the hand moving.** A throw from the hand slot is a place too, and the intent
   carries only a transform, so the host built its copy standing still where the hand let go, coasted
   it falling there, and the thrower's own copy, mid-flight, was converged and then streamed back to
-  it. The flight is the thrower's: when the placed actor is moving, the intent is followed on the
-  same FIFO, behind its record, by a keyed release that closes no hold, with the actor's pose and
-  velocity, so the host's copy flies the same throw from its first tick; and the host's spawn binds
+  it. The flight is the thrower's: when the placed actor is moving, the intent is followed by a keyed
+  release that closes no hold, with the actor's pose and velocity, so the host's copy flies the same
+  throw. The release rides the Normal lane and the intent Bulk, so the release can arrive first: the
+  host keeps it by key for 5 s and flies the prop two ticks after the intent spawns it, past the record
+  behind the intent (`coop/props/prop_drop_intent`, `StashFlight`); and the host's spawn binds
   the thrower's own copy without converging it to the intent's stale transform.
 
 Any other keyed prop a client creates is dropped at that door and never reaches the host: that is
@@ -264,12 +266,16 @@ simulating faster than 5 cm/s goes on that peer's driven-prop channel when that 
 actor is its player, the prop in its player's hand, or a prop it streams that is itself moving -- one at
 rest only leans on its neighbours. The host also takes a knock nobody's player or stream caused, above
 25 cm/s; slower is a pile settling, which every copy does alike. A prop another peer's end set down here
-in the last 1.5 s settles as it did there, and only this peer's own push moves it on: before that rule,
+in the last 1.5 s settles as it did there, and only this peer's own player or the prop in its hand moves
+it on; a prop another peer's body or stream strikes while this peer streams it is that peer's knock, and
+does not restart this peer's rest clock. Before the settling rule,
 each end applied nudged a pile, the receiver took it over, and its end did the same back -- one prop
 changed hands 55 times in a minute. So a throw into a stack topples it on the thrower's machine, by
 vanilla physics, and the thrower streams every prop of it to rest; a prop another peer streams or holds
 is parked here and starts nothing (`coop/props/knock_stream`). A prop with no element id yet is not
-streamed. A streamed copy is placed at each pose: moving, a kinematic copy pushes as if it had no end of
+streamed. A knocked prop's stream starts from the pose it had: nothing goes out until it moves from there,
+and one that rests unmoved closes with no end. A coasting prop rests once it is slower than 3 cm/s and
+6 deg/s for 0.4 s, even while it creeps, and none coasts past 20 s (`coop/props/prop_drive_host`). A streamed copy is placed at each pose: moving, a kinematic copy pushes as if it had no end of
 mass, and one slid under a table threw the table across one screen while the host's stood still.
 
 A prop has one motion owner at a time. A claim takes the generation after every one its peer has seen

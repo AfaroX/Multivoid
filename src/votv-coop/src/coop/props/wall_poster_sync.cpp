@@ -19,6 +19,8 @@
 #include "ue_wrap/engine/engine.h"        // BeginDeferredSpawn, FinishDeferredSpawn, TryGetActorLocation
 #include "ue_wrap/facts/function_row.h"
 
+#include <windows.h>
+
 #include <atomic>
 #include <cstring>
 #include <string>
@@ -101,11 +103,17 @@ void WalkPosters() {
     }
 }
 
+uint64_t g_walkedAt = 0;
+constexpr uint64_t kRewalkMs = 1000;   // a miss walks the world again at most this often
+
 void* FindPoster(const std::wstring& key) {
     if (key.empty()) return nullptr;
     auto it = g_byKey.find(key);
     if (it != g_byKey.end())
         if (void* a = it->second.Get()) return a;
+    const uint64_t now = static_cast<uint64_t>(::GetTickCount64());
+    if (g_walkedAt && now - g_walkedAt < kRewalkMs) return nullptr;
+    g_walkedAt = now;
     WalkPosters();
     it = g_byKey.find(key);
     return it != g_byKey.end() ? it->second.Get() : nullptr;
@@ -177,7 +185,15 @@ void SetPicture(void* poster, const coop::net::WallPosterPayload& p) {
     WriteField(poster, g_fCustom, custom);
 }
 
-void Apply(const coop::net::WallPosterPayload& p, const char* why) {
+// The class a put-up names must be a wall poster: a peer names it, and anything else would be spawned on every
+// screen.
+bool IsPosterClass(void* cls) {
+    for (void* c = cls; c; c = R::SuperStructOf(c))
+        if (R::NameEquals(R::NameOf(c), L"poster_C")) return true;
+    return false;
+}
+
+bool Apply(const coop::net::WallPosterPayload& p, const char* why) {
     const std::wstring key = coop::net::StringFromWireKey(p.key);
     void* have = FindPoster(key);
     if (p.op == kOpRemove) {
@@ -185,36 +201,41 @@ void Apply(const coop::net::WallPosterPayload& p, const char* why) {
             g_byKey.erase(key);
             UE_LOGI("wall_poster: %s -- '%ls' taken down here", why, key.c_str());
         }
-        return;
+        return true;
     }
-    if (p.op == kOpPicture) {
-        if (!have) return;
-        SetPicture(have, p);
-        CallNoArgs(have, L"setPoster");
-        UE_LOGI("wall_poster: %s -- '%ls' shows '%ls' here", why, key.c_str(), StrOf(p.file, p.fileLen).c_str());
-        return;
+    if (p.op == kOpPicture || (p.op == kOpPlace && have)) {
+        // A new picture; or a put-up of a poster this peer already has -- a joiner's save had it, maybe with a
+        // picture changed since -- which takes the sender's picture.
+        if (!have) return false;
+        if (FileOf(have) != StrOf(p.file, p.fileLen)) {
+            SetPicture(have, p);
+            CallNoArgs(have, L"setPoster");
+            UE_LOGI("wall_poster: %s -- '%ls' shows '%ls' here", why, key.c_str(), StrOf(p.file, p.fileLen).c_str());
+        }
+        return true;
     }
-    if (have) return;   // a joiner's save already had it, or the echo of this peer's own
     const std::wstring clsName = StrOf(p.cls.data, p.cls.len);
     void* cls = R::FindClass(clsName.c_str());
-    if (!cls) {
-        UE_LOGW("wall_poster: %s -- class '%ls' not loaded here; '%ls' not put up", why, clsName.c_str(), key.c_str());
-        return;
+    if (!cls || !IsPosterClass(cls)) {
+        UE_LOGW("wall_poster: %s -- class '%ls' is no wall poster here; '%ls' not put up", why, clsName.c_str(),
+                key.c_str());
+        return false;
     }
     const ue_wrap::FVector at{p.x, p.y, p.z};
     const ue_wrap::FRotator rot{p.pitch, p.yaw, p.roll};
     void* poster = E::BeginDeferredSpawn(cls, at, rot);
-    if (!poster) return;
+    if (!poster) return false;
     // Its Key, type, index and picture before its BeginPlay, which looks the picture up.
     WriteField(poster, g_fKey, ue_wrap::fname_utils::StringToFName(key));
     const int32_t type = p.type, index = p.index;
     WriteField(poster, g_fType, type);
     WriteField(poster, g_fIndex, index);
     SetPicture(poster, p);
-    if (!E::FinishDeferredSpawn(poster, at, rot)) return;
+    if (!E::FinishDeferredSpawn(poster, at, rot)) return false;
     g_byKey[key].Set(poster);
     UE_LOGI("wall_poster: %s -- '%ls' put up here (%ls, '%ls')", why, key.c_str(), clsName.c_str(),
             StrOf(p.file, p.fileLen).c_str());
+    return true;
 }
 
 void Send(coop::net::Session* s, const coop::net::WallPosterPayload& p) {
@@ -303,8 +324,8 @@ void Tick() {
 void OnWallPoster(coop::net::Session& session, const coop::net::WallPosterPayload& payload, uint8_t senderSlot) {
     const bool host = session.role() == coop::net::Role::Host;
     if (!host && senderSlot != 0) return;
-    Apply(payload, host ? "a client's" : "the host's");
-    if (!host) return;
+    const bool applied = Apply(payload, host ? "a client's" : "the host's");
+    if (!host || !applied) return;   // relayed only once the host has done it
     for (int i = 1; i < coop::net::kMaxPeers; ++i)
         if (i != senderSlot) session.SendReliableToSlot(i, coop::net::ReliableKind::WallPoster, &payload, sizeof(payload));
 }

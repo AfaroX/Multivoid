@@ -32,16 +32,16 @@ void RestoreCollisionIfNeeded(const wchar_t* pathLabel, const std::wstring& clas
 // physics frees then dereferences. A no-op when the host prop IS simulating.
 void ReconcileToHostPhysics(void* actor, uint8_t physFlags);
 
+// Whether an open container (prop_openContainer_C) has glued `actor`: frozen and attached to it, which the
+// container's own tick does on every peer to an item at rest inside it. Game thread.
+bool GluedInOpenContainer(void* actor);
+
 // The propspawn_flags of a live Aprop_C on THIS peer, read off the actor: the static, frozen,
 // sleep, heavy and removeWOrespawn bits, kSimulatePhysics only while none of the first three holds
 // and the root body is awake, so a settled prop is expressed at rest, and kLiveState. The one
 // builder for every wire that carries a prop's live flags (the join snapshot and its position
 // corrections, the held prop's release, the driven-prop end edge, and the births, which state
-// simulation on over it). 0 for anything not an Aprop_C.
-// Whether an open container (prop_openContainer_C) has glued `actor`: frozen and attached to it, which the
-// container's own tick does on every peer to an item at rest inside it. Game thread.
-bool GluedInOpenContainer(void* actor);
-
+// simulation on over it). A container's glue reads as not frozen. 0 for anything not an Aprop_C.
 uint8_t PhysFlagsOf(void* actor);
 
 // Only the frozen and sleep bits of an Aprop_C, read raw (two field reads, no engine call): what a
@@ -56,8 +56,10 @@ uint8_t FrozenSleepBitsOf(void* actor);
 // alone -- no grab changes it. Acts only on flags read off a live prop (kLiveState), never on a
 // spawn's default; only on a difference, and only on an Aprop_C, so an agreeing copy is never
 // touched: a write here runs init(), which wakes the body. A verb that does not dispatch is said.
+// `keepLocalGlue`: a copy this peer's open container glued stays glued -- for an end or a rest, where the
+// sender's "not frozen" is only its own glue left off the wire; a grab or a release passes false and frees it.
 // Game thread.
-void ConvergeFrozenSleep(void* actor, uint8_t physFlags);
+void ConvergeFrozenSleep(void* actor, uint8_t physFlags, bool keepLocalGlue = false);
 
 // SP-parity simulate state from the wire identity flags. Aprop_C::init() computes
 // SetSimulatePhysics(NOT(static || frozen || sleep)), so a settled prop is simulate-ENABLED but

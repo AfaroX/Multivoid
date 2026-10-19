@@ -42,6 +42,11 @@ void Tick(coop::net::Session* session);
 // later re-spawn authors exactly ONE host prop and there is no dup. Game thread. Bounded FIFO set.
 void NoteClientKeyedDestroy(const std::wstring& key, void* actor);
 
+// HOST: a keyed release that closes no hold (a thrown place's flight) for a prop not here yet -- it rides the
+// Normal lane and its intent Bulk, so it can come first. Kept 5 s for that intent's spawn, which flies it.
+// Game thread.
+void StashFlight(const std::wstring& key, const coop::net::PropReleasePayload& rel);
+
 // CLIENT, on the host's spawn of `key` (host eid `hostEid`): whether it answers an intent this client
 // authored. Refused: the intent's own actor has since been destroyed -- taken by a device the tick after
 // the place, or picked up again -- so the spawn is refused and the host's copy retired by eid. OwnCopy:

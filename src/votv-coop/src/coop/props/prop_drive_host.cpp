@@ -47,6 +47,11 @@ constexpr uint64_t kRestMs = 500;
 constexpr uint64_t kRestProbeMs = 250;
 // A velocity below this at the end goes out as zero: assigning a velocity wakes a body at rest.
 constexpr float kRestVelCmS = 1.0f;
+// A coasting prop this slow for this long has rested, even while it creeps past the epsilons -- a pile
+// settling, a prop rocking in place -- and none coasts past the cap.
+constexpr float kSlowCmS = 3.0f, kSlowDegS = 6.0f;
+constexpr uint64_t kSlowRestMs = 400;
+constexpr uint64_t kCoastCapMs = 20000;
 
 struct Driven {
     ue_wrap::CachedObjRef ref;
@@ -62,6 +67,11 @@ struct Driven {
     ue_wrap::FRotator     sentRot{};
     uint64_t              lastMoveMs  = 0;
     uint64_t              nextProbeMs = 0;   // 0 = every tick; set while resting
+    uint64_t              coastSinceMs = 0;  // when it last began coasting: the cap runs from here
+    uint64_t              slowSinceMs  = 0;  // coasting below kSlowCmS / kSlowDegS since; 0 = not slow
+    // A knock's row starts from the pose it had: nothing is published until it moves from there, and one that
+    // rests without moving closes with no end, so a nudge that moved nothing tells no peer anything.
+    bool                  baseline = false;
 };
 
 std::vector<Driven> g_driven;   // game thread only
@@ -89,7 +99,7 @@ bool HeldBySomeone(void* actor, bool ownHandLetGo = false) {
 }
 
 bool Moved(const Driven& d, const ue_wrap::FVector& loc, const ue_wrap::FRotator& rot) {
-    if (!d.everSent || d.resend) return true;
+    if ((!d.everSent && !d.baseline) || d.resend) return true;
     if (std::fabs(loc.X - d.sentLoc.X) > kSendEpsCm) return true;
     if (std::fabs(loc.Y - d.sentLoc.Y) > kSendEpsCm) return true;
     if (std::fabs(loc.Z - d.sentLoc.Z) > kSendEpsCm) return true;
@@ -170,6 +180,9 @@ Driven* Open(void* actor, bool claimed, const char* why, bool ownHandLetGo = fal
     if (++gen == 0) ++gen;   // 0 is the stream's "no generation"
     d.gen = gen;
     d.lastMoveMs = coop::active_drive::NowMs();
+    d.coastSinceMs = d.lastMoveMs;
+    if (!claimed && !ownHandLetGo && E::TryGetActorLocation(actor, d.sentLoc) && E::TryGetActorRotation(actor, d.sentRot))
+        d.baseline = true;
     coop::prop_drive_stream::NoteOwnClaim(d.eid, d.gen);
     g_driven.push_back(std::move(d));
     UE_LOGI("[PROP-DRIVE] OWN %s eid=%u gen=%u key='%ls' (%s) -- %zu driven",
@@ -211,7 +224,13 @@ void Coast(void* actor, const char* reason) {
 void CoastLetGo(void* actor, uint32_t eid) {
     UE_ASSERT_GAME_THREAD("prop_drive_host::CoastLetGo");
     if (!actor) return;
-    if (Driven* d = Find(actor)) { d->claimed = false; d->nextProbeMs = 0; d->lastMoveMs = coop::active_drive::NowMs(); return; }
+    if (Driven* d = Find(actor)) {
+        d->claimed = false;
+        d->nextProbeMs = 0;
+        d->lastMoveMs = d->coastSinceMs = coop::active_drive::NowMs();
+        d->slowSinceMs = 0;
+        return;
+    }
     Open(actor, /*claimed=*/false, "release", /*ownHandLetGo=*/true, eid);
 }
 
@@ -228,6 +247,8 @@ void Release(void* actor) {
     if (!d || !d->claimed) return;
     d->claimed     = false;
     d->lastMoveMs  = coop::active_drive::NowMs();   // the rest clock starts now
+    d->coastSinceMs = d->lastMoveMs;
+    d->slowSinceMs  = 0;
     d->nextProbeMs = 0;                              // and the probe goes back to per tick
     UE_LOGI("[PROP-DRIVE] OWN release eid=%u -- coasting until it rests", d->eid);
 }
@@ -297,6 +318,22 @@ void Tick(coop::net::Session& s) {
             UE_LOGW("[PROP-DRIVE] OWN eid=%u -- its location or rotation could not be read; it streams nothing and "
                     "rests", d.eid);
         }
+        if (!d.claimed && poseRead) {
+            const PR::VelocityState v = PR::GetPhysicsVelocity(actor);
+            const bool slow = v.ok &&
+                v.linearCmS.X * v.linearCmS.X + v.linearCmS.Y * v.linearCmS.Y + v.linearCmS.Z * v.linearCmS.Z <
+                    kSlowCmS * kSlowCmS &&
+                v.angularDegS.X * v.angularDegS.X + v.angularDegS.Y * v.angularDegS.Y +
+                    v.angularDegS.Z * v.angularDegS.Z < kSlowDegS * kSlowDegS;
+            if (!slow) d.slowSinceMs = 0;
+            else if (!d.slowSinceMs) d.slowSinceMs = now;
+            const bool slowRest = d.slowSinceMs && now - d.slowSinceMs >= kSlowRestMs;
+            if (slowRest || now - d.coastSinceMs >= kCoastCapMs) {
+                if (d.everSent) SendEnd(s, d, actor, loc, rot, slowRest ? "rested (slow)" : "coasted too long");
+                d.dead = true;
+                continue;
+            }
+        }
         if (poseRead && Moved(d, loc, rot)) {
             coop::net::PropPoseSnapshot pp{};
             pp.key       = d.key;
@@ -322,8 +359,10 @@ void Tick(coop::net::Session& s) {
         }
         if (now - d.lastMoveMs >= kRestMs) {
             if (!d.claimed) {
-                if (poseRead)        SendEnd(s, d, actor, loc, rot, "rested");
-                else if (d.everSent) SendEnd(s, d, actor, d.sentLoc, d.sentRot, "rested");
+                // A knock that never moved it from its baseline published nothing: there is nothing to end.
+                const bool published = d.everSent || !d.baseline;
+                if (published && poseRead) SendEnd(s, d, actor, loc, rot, "rested");
+                else if (d.everSent)       SendEnd(s, d, actor, d.sentLoc, d.sentRot, "rested");
                 d.dead = true;
                 continue;
             }

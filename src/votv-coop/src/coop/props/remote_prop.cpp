@@ -16,6 +16,7 @@
 #include "coop/player/players_registry.h"
 #include "coop/props/pile_look.h"
 #include "coop/props/prop_drive_stream.h"  // IsParked: the host's channel owns a parked copy
+#include "coop/props/prop_drop_intent.h"    // StashFlight: a thrown place's flight ahead of its spawn
 #include "coop/props/prop_park.h"  // Park / Unpark: a held prop, and a Character welded on it
 #include "coop/props/prop_echo_suppress.h"
 #include "coop/props/prop_element_tracker.h"
@@ -106,7 +107,7 @@ namespace {  // [drive helpers part 2]
 bool IsActorDrivenByOtherThan(void* actor, int slot) {
     if (!actor) return false;
     for (int s = 0; s < static_cast<int>(coop::players::kMaxPeers); ++s)
-        if (s != slot && g_drives[s].actor == actor) return true;
+        if (s != slot && g_drives[s].LiveActor() == actor) return true;
     return false;
 }
 
@@ -118,8 +119,9 @@ bool IsActorUnderAnyDrive(void* actor) {
     // g_drives is game-thread only, by assertion rather than a mutex.
     UE_ASSERT_GAME_THREAD("g_drives (IsActorUnderAnyDrive)");
     if (!actor) return false;
+    // Live only: a dead drive's pointer can name a new actor at the same address.
     for (const auto& d : g_drives) {
-        if (d.actor == actor) return true;
+        if (d.LiveActor() == actor) return true;
     }
     return false;
 }
@@ -596,6 +598,12 @@ void OnRelease(int senderSlot, const coop::net::PropReleasePayload& payload, voi
             }
         }
     }
+    // A thrown place's flight (keyed, closing no hold) for a prop whose intent has not spawned it here yet:
+    // kept for that spawn, which flies it (prop_drop_intent).
+    if (!propActor && releasedSlot < 0 && payload.holdGen == 0 && payload.elementId == 0 && payload.hasPose) {
+        coop::prop_drop_intent::StashFlight(keyW, payload);
+        return;
+    }
     // Someone else moves the prop -- this peer's own player, another slot's drive, the host's
     // driven-prop channel parking it: that owner has its physics and its flags, and this release
     // closes its own hold, clears its own drive and moves nothing. This slot's drive left the copy
@@ -783,7 +791,7 @@ void EndAnyHoldOn(void* actor) {
     if (!actor) return;
     for (int s = 0; s < static_cast<int>(coop::players::kMaxPeers); ++s) {
         ActiveDrive& d = g_drives[s];
-        if (d.actor != actor) continue;
+        if (d.LiveActor() != actor) continue;
         CloseHold(s, g_holds[s].driveGen);
         UE_LOGI("remote_prop: slot %d hold %u ends where the prop was taken from the hand (%p)", s,
                 static_cast<unsigned>(g_holds[s].driveGen), actor);
@@ -797,7 +805,7 @@ void ClearAnyDriveFor(void* actor) {
     UE_ASSERT_GAME_THREAD("g_drives (remote_prop::ClearAnyDriveFor)");
     if (!actor) return;
     for (auto& d : g_drives) {
-        if (d.actor == actor) {
+        if (d.LiveActor() == actor) {
             UE_LOGI("remote_prop: actor %p was under active kinematic drive (slot %td) -- clearing drive cache",
                     actor, std::distance(&g_drives[0], &d));
             ResetDriveState(d);

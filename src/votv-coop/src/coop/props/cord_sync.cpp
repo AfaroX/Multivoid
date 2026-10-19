@@ -65,8 +65,10 @@ std::map<void*, uint64_t> g_remoteDrag;   // cord -> when its last dragged pose 
 constexpr uint64_t kRemoteDragMs = 2000;  // no pose for this long: the drag is over, the head goes home
 // CLIENT: a cord this copy's tick wants out as stretched, since when. The host decides at first, since the
 // prop's place is the host's; a stretch that outlasts kStretchMs here comes out and is sent.
-std::map<void*, uint64_t> g_stretchSince;
+struct Stretch { uint64_t since = 0, last = 0; };
+std::map<void*, Stretch> g_stretchSince;
 constexpr uint64_t kStretchMs = 3000;
+constexpr uint64_t kStretchGapMs = 250;   // a stretch not seen again within this is over: the next starts afresh
 R::ParamOffset g_pSocket(L"socket"), g_pLoad(L"load");
 
 uint64_t NowMs() { return static_cast<uint64_t>(::GetTickCount64()); }
@@ -319,10 +321,11 @@ sg::Verdict OnDisconnectPre(const sg::Call& c) {
         // plug; one stretched for kStretchMs comes out here too and says so.
         if (!IsHost(s)) {
             const uint64_t now = NowMs();
-            auto st = g_stretchSince.find(c.object);
-            if (st == g_stretchSince.end()) { g_stretchSince[c.object] = now; return sg::Verdict::Cancel; }
-            if (now - st->second < kStretchMs) return sg::Verdict::Cancel;
-            g_stretchSince.erase(st);
+            Stretch& st = g_stretchSince[c.object];
+            if (!st.since || now - st.last > kStretchGapMs) st.since = now;   // a new stretch
+            st.last = now;
+            if (now - st.since < kStretchMs) return sg::Verdict::Cancel;
+            g_stretchSince.erase(c.object);
         }
         SendFor(s, item, nullptr, "stretched out");
         return sg::Verdict::Run;
@@ -356,7 +359,9 @@ void OnTickPost(const sg::Call& c) {
     DragSent& d = g_localDrag[c.object];
     const ue_wrap::FVector at = ue_wrap::engine::GetComponentLocation(head);
     const float dx = at.X - d.loc.X, dy = at.Y - d.loc.Y, dz = at.Z - d.loc.Z;
-    if (now - d.at < kDragMs || (d.at && dx * dx + dy * dy + dz * dz < 1.f)) return;
+    // At most every kDragMs, and only when it moved -- but once a second regardless, so a dragger holding
+    // still is not timed out on the other screens.
+    if (now - d.at < kDragMs || (d.at && dx * dx + dy * dy + dz * dz < 1.f && now - d.at < 1000)) return;
     coop::net::CordPlugPayload p{};
     if (!Fill(item, nullptr, p)) return;
     const ue_wrap::FRotator rot = ue_wrap::engine::GetComponentWorldRotation(head);
@@ -419,6 +424,10 @@ void Tick() {
         void* item = ResolveItem(it->second.p);
         if (it->second.item.Raw() && item != it->second.item.Get()) { it = g_assert.erase(it); continue; }
         if (!it->second.item.Raw() && item) it->second.item.Set(item);
+        // A cord this player is dragging is the player's to place; nothing held is pressed on it.
+        void* cord = CordOf(item);
+        if (!item) { it = g_assert.erase(it); continue; }   // no such item here: said once, not held
+        if (cord && ReadBoolField(cord, g_cordDrag)) { it = g_assert.erase(it); continue; }
         Apply(it->second.p, "held");
         ++it;
     }
@@ -427,12 +436,15 @@ void Tick() {
 void OnCordPlug(coop::net::Session& session, const coop::net::CordPlugPayload& payload, uint8_t senderSlot) {
     const bool host = session.role() == coop::net::Role::Host;
     if (!host && senderSlot != 0) return;   // a client hears the host alone
-    Apply(payload, host ? "a client's" : "the host's");
+    const bool applied = Apply(payload, host ? "a client's" : "the host's");
     if (host) {
+        if (!applied) return;   // relayed only once the host has done it
         // To every client but the sender, whose copy already did it: an echo of its own drag would unplug
-        // the plug that ended the drag.
+        // the plug that ended the drag. A client's word is never a join snapshot.
+        coop::net::CordPlugPayload out = payload;
+        out.snapshot = 0;
         for (int i = 1; i < coop::net::kMaxPeers; ++i)
-            if (i != senderSlot) session.SendReliableToSlot(i, coop::net::ReliableKind::CordPlug, &payload, sizeof(payload));
+            if (i != senderSlot) session.SendReliableToSlot(i, coop::net::ReliableKind::CordPlug, &out, sizeof(out));
         return;
     }
     // The join snapshot is held a while against the save's delayed reconnect; any later word from the host

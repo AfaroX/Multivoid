@@ -65,7 +65,7 @@ bool GluedInOpenContainer(void* actor) {
     void* parent = f.Get<void*>(L"ReturnValue");
     if (!parent || !R::IsLive(parent)) return false;
     for (void* cls = R::ClassOf(parent); cls; cls = R::SuperStructOf(cls))
-        if (R::ToString(R::NameOf(cls)) == L"prop_openContainer_C") return true;
+        if (R::NameEquals(R::NameOf(cls), L"prop_openContainer_C")) return true;
     return false;
 }
 
@@ -97,7 +97,7 @@ uint8_t FrozenSleepBitsOf(void* actor) {
                                 (ue_wrap::prop::IsSleeping(actor) ? pf::kSleep : 0));
 }
 
-void ConvergeFrozenSleep(void* actor, uint8_t physFlags) {
+void ConvergeFrozenSleep(void* actor, uint8_t physFlags, bool keepLocalGlue) {
     namespace pf = coop::net::propspawn_flags;
     if (!(physFlags & pf::kLiveState) || !actor || !ue_wrap::prop::IsDescendantOfProp(actor)) return;
     const bool wantFrozen = (physFlags & pf::kFrozen) != 0;
@@ -106,7 +106,7 @@ void ConvergeFrozenSleep(void* actor, uint8_t physFlags) {
     const bool isSleep  = ue_wrap::prop::IsSleeping(actor);
     if (isFrozen == wantFrozen && isSleep == wantSleep) return;
     // This copy's own open container glued it: the glue is the container's, and it lets go when tipped.
-    if (isFrozen && !wantFrozen && GluedInOpenContainer(actor)) return;
+    if (keepLocalGlue && isFrozen && !wantFrozen && GluedInOpenContainer(actor)) return;
     const bool ok = (!wantFrozen && !wantSleep)
         ? ue_wrap::prop::CallAwakeUnfreeze(actor)
         : ue_wrap::prop::CallBaseSetPropProps(actor, ue_wrap::prop::IsStatic(actor), wantFrozen, wantSleep);

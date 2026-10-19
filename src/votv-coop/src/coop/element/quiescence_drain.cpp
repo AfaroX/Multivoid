@@ -440,7 +440,7 @@ void ApplyPendingPosCorrections() {
         // that changed them: the extinguisher it took off a mount is not frozen at its new place, and
         // a sign it pried off its wall is not stuck there.
         coop::prop_stick_sync::ConvergeStuck(actor, c.physFlags);
-        coop::prop_wire_parity::ConvergeFrozenSleep(actor, c.physFlags);
+        coop::prop_wire_parity::ConvergeFrozenSleep(actor, c.physFlags, /*keepLocalGlue=*/true);
         ue_wrap::FVector got{};
         if (!ue_wrap::engine::TryGetActorLocation(actor, got)) {
             UE_LOGW("[PILE-B3] CLIENT pos-correction APPLIED eid=%u host=(%.1f,%.1f,%.1f) -- the location "

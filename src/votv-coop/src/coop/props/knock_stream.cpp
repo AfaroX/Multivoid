@@ -86,7 +86,14 @@ void OnHitPost(const sg::Call& c) {
     const bool world = host && !theirs && !settling && sp >= kWorldKnockCmS;
     const bool owned = coop::prop_drive_host::OwnsActor(prop);
     if (!mine && !world && !owned) return;
-    if (settling && !mine) return;
+    // While it settles only this player's own touch counts: a prop this peer streams that leans on it is the
+    // same pile settling.
+    const bool direct = other && (other == coop::local_streams::LocalPlayer() ||
+                                  other == coop::local_streams::LastHeldActor());
+    if (settling && !direct) return;
+    // Another peer's prop or body hit one this peer streams: that peer claims it for its own knock; restarting
+    // the rest clock here only stretches a stream about to be handed over.
+    if (owned && !mine && theirs) return;
     // A prop with no element id has no copy a peer could move -- a client's drop the host spawned this
     // very tick, before its id is minted, is the usual one -- so its knock is no news.
     const coop::element::ElementId eid = coop::element::Registry::Get().EidForActor(prop);

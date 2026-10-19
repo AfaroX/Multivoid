@@ -205,7 +205,7 @@ void ApplyEnd(void* actor, const coop::net::PropDriveEndPayload& p, bool parkedH
     // The host's frozen and sleep at the end first: a hook that bites a frozen prop unfreezes it on
     // the host only (hook_C's attach_a runs setPropProps), so a copy still frozen here takes the
     // host's flags before the physics decision reads them.
-    coop::prop_wire_parity::ConvergeFrozenSleep(actor, p.physFlags);
+    coop::prop_wire_parity::ConvergeFrozenSleep(actor, p.physFlags, /*keepLocalGlue=*/true);
     if (!PhysicsStaysOff(actor)) {
         coop::prop_wire_parity::RestoreSpParityPhysicsAfterConverge(actor, p.physFlags);
         const float lin2 = p.linVelX * p.linVelX + p.linVelY * p.linVelY + p.linVelZ * p.linVelZ;
@@ -232,6 +232,13 @@ void TickApplyAndDrive(coop::net::Session& s) {
     UE_ASSERT_GAME_THREAD("prop_drive_stream::TickApplyAndDrive");
     const uint64_t nowMs = AD::NowMs();
     const int me = LocalSlot(s);
+    static uint64_t sNextSweep = 0;
+    if (nowMs >= sNextSweep) {
+        // Settled props nobody touched again: their entries would outlive the actors.
+        sNextSweep = nowMs + 1000;
+        for (auto it = g_settledAt.begin(); it != g_settledAt.end();)
+            it = nowMs - it->second >= kSettleQuietMs ? g_settledAt.erase(it) : std::next(it);
+    }
     g_batch.clear();
     if (s.TakeRemotePropDriveBatch(g_batch)) {
         for (const coop::net::PropPoseSnapshot& e : g_batch) {
@@ -355,7 +362,10 @@ void TickApplyAndDrive(coop::net::Session& s) {
         // kinematic when the game here switches its simulation back on. That includes a copy parked
         // frozen, which the park left as it was, and which an unstick or an unfreeze here has since
         // freed: it is parked kinematic from then on, and the end edge hands its physics back.
-        if (dr.d.mesh && ue_wrap::engine::IsComponentSimulatingPhysics(dr.d.mesh)) {
+        // Not over a copy that is frozen, static or glued in an open container here: the game holds that one
+        // still itself, and parking it again every tick only fights it (3-9 ms a frame in a full crate).
+        if (dr.d.mesh && ue_wrap::engine::IsComponentSimulatingPhysics(dr.d.mesh) && !PhysicsStaysOff(actor) &&
+            !coop::prop_wire_parity::GluedInOpenContainer(actor)) {
             coop::prop_park::Park(actor, dr.d.mesh);
             dr.physicsParked = true;
             if (++dr.relatches == 1) {
