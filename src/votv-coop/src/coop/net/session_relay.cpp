@@ -38,10 +38,13 @@ void Session::RelayUnreliableToOtherClients(int originSlot, const void* data, in
     // packet of its own, so a client judges the server's order
     // (reference/mtasa-blue/Server/mods/deathmatch/logic/net/CSimPlayerManager.cpp:229-249).
     if (cfg_.role != Role::Host) return;
-    if (len < static_cast<int>(sizeof(PacketHeader)) || len > kMaxPacketBytes) return;
+    // A driven-prop batch is the one relayed datagram past kMaxPacketBytes: up to 16 poses (1048 B). A 256-byte
+    // cap dropped every client batch of four or more props, so a third player saw a client's pile not move.
+    constexpr int kRelayMax = kMaxPacketBytes > kPropDrivePoseDatagramMax ? kMaxPacketBytes : kPropDrivePoseDatagramMax;
+    if (len < static_cast<int>(sizeof(PacketHeader)) || len > kRelayMax) return;
     auto* sockets = SteamNetworkingSockets();
     if (!sockets) return;
-    uint8_t buf[kMaxPacketBytes];
+    uint8_t buf[kRelayMax];
     std::memcpy(buf, data, static_cast<size_t>(len));
     auto* h = reinterpret_cast<PacketHeader*>(buf);
     h->senderEpoch = ownEpoch_;

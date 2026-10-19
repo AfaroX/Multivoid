@@ -459,6 +459,12 @@ bool HandleEntityEvent(net::Session& session,
                     p.x, p.y, p.z);
             break;
         }
+        if (std::fabs(p.pitch) > 360.f || std::fabs(p.yaw) > 360.f || std::fabs(p.roll) > 360.f ||
+            std::fabs(p.linVelX) > 1.0e6f || std::fabs(p.linVelY) > 1.0e6f || std::fabs(p.linVelZ) > 1.0e6f ||
+            std::fabs(p.angVelX) > 1.0e6f || std::fabs(p.angVelY) > 1.0e6f || std::fabs(p.angVelZ) > 1.0e6f) {
+            UE_LOGW("event_feed: PropDriveEnd rotation or velocity out of bounds -- dropping");
+            break;
+        }
         if (p.eid == 0u || p.eid == coop::element::kInvalidId) {
             UE_LOGW("event_feed: PropDriveEnd eid=0x%08x not a valid id -- dropping", p.eid);
             break;

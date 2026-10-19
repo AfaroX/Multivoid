@@ -31,16 +31,14 @@ void Session::PublishPropDrivePose(const PropPoseSnapshot& pose) {
 
 bool Session::TakeRemotePropDriveBatch(std::vector<PropPoseSnapshot>& out) {
     if (!connected()) return false;
+    static_assert(kMaxPeers <= 16, "the origin slot rides the pose flags' high nibble");
     std::lock_guard<std::mutex> lk(remoteMutex_);
-    std::vector<PropPoseSnapshot> one;
     bool any = false;
     for (int slot = 0; slot < kMaxPeers; ++slot) {
-        one.clear();
-        if (!origin_[slot].propDrive.Take(one)) continue;
-        for (PropPoseSnapshot& e : one) {
-            e.flags = static_cast<uint8_t>((e.flags & 0x0F) | (slot << 4));
-            out.push_back(e);
-        }
+        const size_t from = out.size();
+        if (!origin_[slot].propDrive.TakeAppend(out)) continue;
+        for (size_t i = from; i < out.size(); ++i)
+            out[i].flags = static_cast<uint8_t>((out[i].flags & 0x0F) | (slot << 4));
         any = true;
     }
     return any;
@@ -88,6 +86,8 @@ void Session::StoreRemotePropDriveBatch(int routeSlot, int peerSlot, const void*
         const PropPoseSnapshot& e = batch[i];
         if (!std::isfinite(e.x) || !std::isfinite(e.y) || !std::isfinite(e.z) ||
             !std::isfinite(e.pitch) || !std::isfinite(e.yaw) || !std::isfinite(e.roll) ||
+            std::fabs(e.x) > kMaxCoord || std::fabs(e.y) > kMaxCoord || std::fabs(e.z) > kMaxCoord ||
+            std::fabs(e.pitch) > 180.f || std::fabs(e.yaw) > 180.f || std::fabs(e.roll) > 180.f ||
             e.key.len > sizeof(e.key.data) || e.elementId == 0u) {
             static uint32_t sMalformed = 0;
             if (++sMalformed <= 3 || (sMalformed % 100) == 0)

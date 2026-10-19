@@ -116,6 +116,14 @@ public:
         return true;
     }
 
+    // Game thread: append every pose merged since the last take to `out`, keeping this store's capacity.
+    bool TakeAppend(std::vector<Pose>& out) {
+        if (remote_.empty()) return false;
+        out.insert(out.end(), remote_.begin(), remote_.end());
+        remote_.clear();
+        return true;
+    }
+
 private:
     std::vector<Pose> remote_;
     SeqLatch          latch_;

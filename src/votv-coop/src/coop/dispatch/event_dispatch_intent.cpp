@@ -49,6 +49,17 @@
 #include <cstring>
 #include <string>
 
+namespace {
+// A pose a client named: finite, inside the world, a rotation within a turn.
+bool PoseInWorld(float x, float y, float z, float pitch, float yaw, float roll) {
+    const float v[6] = {x, y, z, pitch, yaw, roll};
+    for (float f : v) if (!std::isfinite(f)) return false;
+    return std::fabs(x) <= coop::net::kMaxCoord && std::fabs(y) <= coop::net::kMaxCoord &&
+           std::fabs(z) <= coop::net::kMaxCoord && std::fabs(pitch) <= 360.f && std::fabs(yaw) <= 360.f &&
+           std::fabs(roll) <= 360.f;
+}
+}  // namespace
+
 namespace coop::event_feed {
 
 bool HandleIntentEvent(net::Session& session,
@@ -408,6 +419,11 @@ bool HandleIntentEvent(net::Session& session,
         }
         net::CordPlugPayload p{};
         std::memcpy(&p, msg.payload, sizeof(p));
+        if (p.plugged > 2 || p.item.len > sizeof(p.item.data) || p.socket.len > sizeof(p.socket.data) ||
+            !PoseInWorld(p.sx, p.sy, p.sz, p.hp, p.hy, p.hr)) {
+            UE_LOGW("event_feed: CordPlug with a malformed pose or key -- dropped");
+            break;
+        }
         coop::cord_sync::OnCordPlug(session, p, static_cast<uint8_t>(msg.senderPeerSlot));
         break;
     }
@@ -423,7 +439,12 @@ bool HandleIntentEvent(net::Session& session,
         }
         net::WallPosterPayload p{};
         std::memcpy(&p, msg.payload, sizeof(p));
-        if (p.fileLen > sizeof(p.file) || p.cls.len > sizeof(p.cls.data) || p.key.len > sizeof(p.key.data)) break;
+        if (p.fileLen > sizeof(p.file) || p.cls.len > sizeof(p.cls.data) || p.key.len == 0 ||
+            p.key.len > sizeof(p.key.data) || p.op < 1 || p.op > 3 ||
+            (p.op == 1 && !PoseInWorld(p.x, p.y, p.z, p.pitch, p.yaw, p.roll))) {
+            UE_LOGW("event_feed: WallPoster with a malformed key, op or pose -- dropped");
+            break;
+        }
         coop::wall_poster_sync::OnWallPoster(session, p, static_cast<uint8_t>(msg.senderPeerSlot));
         break;
     }
@@ -438,6 +459,10 @@ bool HandleIntentEvent(net::Session& session,
         }
         net::PropToolFlagsPayload p{};
         std::memcpy(&p, msg.payload, sizeof(p));
+        if (p.key.len > sizeof(p.key.data) || !PoseInWorld(p.x, p.y, p.z, p.pitch, p.yaw, p.roll)) {
+            UE_LOGW("event_feed: PropToolFlags with a malformed pose or key -- dropped");
+            break;
+        }
         coop::prop_tool_flags::OnToolFlags(session, p, static_cast<uint8_t>(msg.senderPeerSlot));
         break;
     }
