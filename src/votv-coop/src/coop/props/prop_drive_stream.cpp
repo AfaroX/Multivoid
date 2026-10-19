@@ -192,7 +192,13 @@ size_t g_endCount = 0;   // ends recorded since the session began; the newest is
 // parity restore the join's converge applies after its teleport, then the velocity -- only into
 // a body this module parked and the flags leave simulating, and only when it is not zero, since
 // assigning a velocity wakes a body at rest.
+// What another peer's end just set down here, and when: its copy settles against its neighbours for a moment,
+// and those contacts are that peer's settling, not a knock of this one's (coop/props/knock_stream).
+std::unordered_map<void*, uint64_t> g_settledAt;
+constexpr uint64_t kSettleQuietMs = 1500;
+
 void ApplyEnd(void* actor, const coop::net::PropDriveEndPayload& p, bool parkedHere) {
+    g_settledAt[actor] = AD::NowMs();
     E::SetActorLocation(actor, ue_wrap::FVector{p.x, p.y, p.z});
     g_ends[g_endCount++ % kRecentEnds] = AppliedEnd{p.eid, ue_wrap::FVector{p.x, p.y, p.z}, ::GetTickCount64()};
     E::SetActorRotation(actor, ue_wrap::FRotator{p.pitch, p.yaw, p.roll});
@@ -528,6 +534,15 @@ void OnPeerGone(int slot) {
     }
 }
 
+bool SettledByPeerRecently(void* actor) {
+    if (!actor) return false;
+    auto it = g_settledAt.find(actor);
+    if (it == g_settledAt.end()) return false;
+    if (AD::NowMs() - it->second < kSettleQuietMs) return true;
+    g_settledAt.erase(it);
+    return false;
+}
+
 bool IsParked(void* actor) {
     UE_ASSERT_GAME_THREAD("prop_drive_stream::IsParked");
     if (!actor) return false;
@@ -541,6 +556,7 @@ bool IsParked(void* actor) {
 void OnDisconnect() {
     for (auto& kv : g_drives) GiveBackPhysics(kv.second, kv.second.d.LiveActor());
     g_drives.clear();
+    g_settledAt.clear();
     g_endedGen.clear();
     g_yieldedGen.clear();
     g_miss.clear();

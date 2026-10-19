@@ -34,6 +34,9 @@ constexpr int kTag = 0x4B4E4F43;  // 'KNOC'
 // A contact that leaves the prop slower than this is a touch, not a knock: it would open a stream only to
 // close it half a second later with the pose every peer already has.
 constexpr float kMovingCmS = 5.0f;
+// A knock nobody's player or stream caused is the host's only when the prop moves like one: slower is a pile
+// settling, which every copy does alike.
+constexpr float kWorldKnockCmS = 25.0f;
 
 std::atomic<coop::net::Session*> g_session{nullptr};
 R::ParamOffset g_pOther(L"OtherActor");
@@ -43,10 +46,19 @@ bool OthersMove(void* actor) {
     return actor && (coop::prop_drive_stream::IsParked(actor) || coop::remote_prop::IsActorUnderAnyDrive(actor));
 }
 
-// This peer moved `other`: this player, the prop in its hand, or a prop it streams.
+float SpeedOf(void* actor) {
+    const ue_wrap::prop::VelocityState v = ue_wrap::prop::GetPhysicsVelocity(actor);
+    if (!v.ok) return 0.f;
+    return std::sqrt(v.linearCmS.X * v.linearCmS.X + v.linearCmS.Y * v.linearCmS.Y + v.linearCmS.Z * v.linearCmS.Z);
+}
+
+// This peer moved `other` into it: this player, the prop in its hand, or a prop it streams that is itself
+// moving. A prop it streams that has come to rest only leans on its neighbours; that is no knock.
 bool Mine(void* other) {
-    return other && (other == coop::local_streams::LocalPlayer() || other == coop::local_streams::LastHeldActor() ||
-                     coop::prop_drive_host::OwnsActor(other));
+    if (!other) return false;
+    if (other == coop::local_streams::LocalPlayer() || other == coop::local_streams::LastHeldActor()) return true;
+    return coop::prop_drive_host::OwnsActor(other) && ue_wrap::prop::IsDescendantOfProp(other) &&
+           SpeedOf(other) >= kMovingCmS;
 }
 bool g_watched = false, g_saidLive = false;
 uint64_t g_knocks = 0;
@@ -62,13 +74,19 @@ void OnHitPost(const sg::Call& c) {
     // Who set it moving: this peer when the other actor is its own; the host for a world knock nobody's
     // player or stream caused. Another player's body or another peer's prop is that peer's knock.
     const bool host = s->role() == coop::net::Role::Host;
-    const bool theirs = other && (OthersMove(other) || coop::players::Registry::Get().IsPuppet(other));
-    if (!Mine(other) && !(host && !theirs) && !coop::prop_drive_host::OwnsActor(prop)) return;
-    const ue_wrap::prop::VelocityState v = ue_wrap::prop::GetPhysicsVelocity(prop);
-    if (!v.ok) return;
-    const float sp = std::sqrt(v.linearCmS.X * v.linearCmS.X + v.linearCmS.Y * v.linearCmS.Y +
-                               v.linearCmS.Z * v.linearCmS.Z);
+    const bool theirs = other && (OthersMove(other) || coop::players::Registry::Get().IsPuppet(other) ||
+                                  coop::prop_drive_stream::SettledByPeerRecently(other));
+    const float sp = SpeedOf(prop);
     if (sp < kMovingCmS) return;
+    // A prop another peer's end just set down settles here as it did there: only this peer's own push moves
+    // it on. Without this, each end applied here nudged a pile, this peer took the pile over, and its end did
+    // the same on the other peer -- one candy changed hands 55 times in a minute.
+    const bool settling = coop::prop_drive_stream::SettledByPeerRecently(prop);
+    const bool mine = Mine(other);
+    const bool world = host && !theirs && !settling && sp >= kWorldKnockCmS;
+    const bool owned = coop::prop_drive_host::OwnsActor(prop);
+    if (!mine && !world && !owned) return;
+    if (settling && !mine) return;
     // A prop with no element id has no copy a peer could move -- a client's drop the host spawned this
     // very tick, before its id is minted, is the usual one -- so its knock is no news.
     const coop::element::ElementId eid = coop::element::Registry::Get().EidForActor(prop);

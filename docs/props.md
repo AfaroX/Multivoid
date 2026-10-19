@@ -261,8 +261,12 @@ A prop another prop strikes moving has no verb of its own, so it once moved on e
 own physics and rested apart. Every prop carries `comp_physicsImpact`, whose contact report runs through
 the component's `hitCpp(HitComponent, OtherActor, ...)`. On every peer, after it runs, a prop now
 simulating faster than 5 cm/s goes on that peer's driven-prop channel when that peer moved it: the other
-actor is its player, the prop in its player's hand, or a prop it already streams. The host also takes a
-knock nobody's player or stream caused. So a throw into a stack topples it on the thrower's machine, by
+actor is its player, the prop in its player's hand, or a prop it streams that is itself moving -- one at
+rest only leans on its neighbours. The host also takes a knock nobody's player or stream caused, above
+25 cm/s; slower is a pile settling, which every copy does alike. A prop another peer's end set down here
+in the last 1.5 s settles as it did there, and only this peer's own push moves it on: before that rule,
+each end applied nudged a pile, the receiver took it over, and its end did the same back -- one prop
+changed hands 55 times in a minute. So a throw into a stack topples it on the thrower's machine, by
 vanilla physics, and the thrower streams every prop of it to rest; a prop another peer streams or holds
 is parked here and starts nothing (`coop/props/knock_stream`). A prop with no element id yet is not
 streamed. A streamed copy is placed at each pose: moving, a kinematic copy pushes as if it had no end of

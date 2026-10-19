@@ -38,6 +38,10 @@ void OnEnd(const coop::net::PropDriveEndPayload& p, int senderSlot);
 // would move it or re-run its init() leaves it alone, as it leaves a held prop. Game thread.
 bool IsParked(void* actor);
 
+// Another peer's end set `actor` down here within the last 1.5 s: its contacts while it settles are that
+// peer's, not a knock of this one's. Game thread.
+bool SettledByPeerRecently(void* actor);
+
 // Register the use-press observer that hands a prop still under the host's stream to this player's grab.
 // Idempotent; retried until mainPlayer_C is loaded. Game thread.
 void InstallGrabYield();
