@@ -38,6 +38,10 @@ void ReconcileToHostPhysics(void* actor, uint8_t physFlags);
 // builder for every wire that carries a prop's live flags (the join snapshot and its position
 // corrections, the held prop's release, the driven-prop end edge, and the births, which state
 // simulation on over it). 0 for anything not an Aprop_C.
+// Whether an open container (prop_openContainer_C) has glued `actor`: frozen and attached to it, which the
+// container's own tick does on every peer to an item at rest inside it. Game thread.
+bool GluedInOpenContainer(void* actor);
+
 uint8_t PhysFlagsOf(void* actor);
 
 // Only the frozen and sleep bits of an Aprop_C, read raw (two field reads, no engine call): what a

@@ -6,6 +6,7 @@
 #include "coop/props/prop_wire_parity.h"
 
 #include "coop/net/protocol.h"
+#include "ue_wrap/core/call.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/actors/prop.h"
 #include "ue_wrap/core/reflection.h"
@@ -54,12 +55,29 @@ void ReconcileToHostPhysics(void* actor, uint8_t physFlags) {
     ue_wrap::engine::SetComponentSimulatePhysics(mesh, /*simulate=*/false);
 }
 
+bool GluedInOpenContainer(void* actor) {
+    namespace R = ue_wrap::reflection;
+    if (!actor) return false;
+    void* fn = R::FindDispatchFunctionCached(R::ClassOf(actor), L"GetAttachParentActor");
+    if (!fn) return false;
+    ue_wrap::ParamFrame f(fn);
+    if (!f.valid() || !ue_wrap::Call(actor, f)) return false;
+    void* parent = f.Get<void*>(L"ReturnValue");
+    if (!parent || !R::IsLive(parent)) return false;
+    for (void* cls = R::ClassOf(parent); cls; cls = R::SuperStructOf(cls))
+        if (R::ToString(R::NameOf(cls)) == L"prop_openContainer_C") return true;
+    return false;
+}
+
 uint8_t PhysFlagsOf(void* actor) {
     namespace pf = coop::net::propspawn_flags;
     if (!actor || !ue_wrap::prop::IsDescendantOfProp(actor)) return 0;  // the offsets are the prop's
     uint8_t flags = pf::kLiveState;
     const bool isStatic = ue_wrap::prop::IsStatic(actor);
-    const bool frozen   = ue_wrap::prop::IsFrozen(actor);
+    // An open container's glue -- frozen and attached to it -- is that container's own doing, on every peer
+    // alike: it goes out as an item at rest, so the receiver's container glues its copy, attachment and
+    // all. Sent frozen with no attachment, the copy hung in place and walled the container in.
+    const bool frozen   = ue_wrap::prop::IsFrozen(actor) && !GluedInOpenContainer(actor);
     const bool sleep    = ue_wrap::prop::IsSleeping(actor);
     if (!(isStatic || frozen || sleep) && !ue_wrap::engine::IsActorRootBodyAtRest(actor))
         flags |= pf::kSimulatePhysics;
@@ -74,7 +92,8 @@ uint8_t PhysFlagsOf(void* actor) {
 uint8_t FrozenSleepBitsOf(void* actor) {
     namespace pf = coop::net::propspawn_flags;
     if (!actor || !ue_wrap::prop::IsDescendantOfProp(actor)) return 0;
-    return static_cast<uint8_t>((ue_wrap::prop::IsFrozen(actor) ? pf::kFrozen : 0) |
+    const bool frozen = ue_wrap::prop::IsFrozen(actor) && !GluedInOpenContainer(actor);
+    return static_cast<uint8_t>((frozen ? pf::kFrozen : 0) |
                                 (ue_wrap::prop::IsSleeping(actor) ? pf::kSleep : 0));
 }
 
@@ -86,6 +105,8 @@ void ConvergeFrozenSleep(void* actor, uint8_t physFlags) {
     const bool isFrozen = ue_wrap::prop::IsFrozen(actor);
     const bool isSleep  = ue_wrap::prop::IsSleeping(actor);
     if (isFrozen == wantFrozen && isSleep == wantSleep) return;
+    // This copy's own open container glued it: the glue is the container's, and it lets go when tipped.
+    if (isFrozen && !wantFrozen && GluedInOpenContainer(actor)) return;
     const bool ok = (!wantFrozen && !wantSleep)
         ? ue_wrap::prop::CallAwakeUnfreeze(actor)
         : ue_wrap::prop::CallBaseSetPropProps(actor, ue_wrap::prop::IsStatic(actor), wantFrozen, wantSleep);
