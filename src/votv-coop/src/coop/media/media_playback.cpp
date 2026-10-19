@@ -12,6 +12,8 @@
 #include "coop/text/utf8_codec.h"
 
 #include "ue_wrap/actors/prop.h"            // GetInteractableKeyString
+#include "ue_wrap/core/cached_obj_ref.h"
+#include "ue_wrap/core/call.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/script_gate.h"
@@ -539,6 +541,24 @@ sg::Verdict OnFinPre(const sg::Call& c) {
 }
 
 // The interface opening on a device: this player takes it, or is refused it.
+// Interfaces refused this tick, closed on the next. The device enters its interface mode -- the player's
+// setActiveInterface: cursor on, movement off -- before it calls the interface's `open`, so a refused open
+// alone left the player with a cursor and nothing to close. The interface's own `quit` is what hands the
+// controls back (it sets no interface and hides itself), and it runs after the device's use has returned.
+std::vector<ue_wrap::CachedObjRef> g_quitNext;
+
+void QuitRefused() {
+    for (ue_wrap::CachedObjRef& r : g_quitNext) {
+        void* widget = r.Get();
+        if (!widget) continue;
+        void* fn = R::FindDispatchFunctionCached(R::ClassOf(widget), L"quit");
+        if (!fn) continue;
+        ue_wrap::ParamFrame f(fn);
+        if (f.valid()) ue_wrap::Call(widget, f);
+    }
+    g_quitNext.clear();
+}
+
 sg::Verdict OnUiOpenPre(const sg::Call& c) {
     auto* s = Live();
     if (!s || c.fromOurCode || !c.locals) return sg::Verdict::Run;
@@ -547,7 +567,10 @@ sg::Verdict OnUiOpenPre(const sg::Call& c) {
     void* device = nullptr;
     std::memcpy(&device, c.locals + off, sizeof(device));
     if (!device || MD::KindOf(device) == MD::Kind::None) return sg::Verdict::Run;
-    if (!ClaimHere(s, device, /*hold=*/true)) return sg::Verdict::Cancel;
+    if (!ClaimHere(s, device, /*hold=*/true)) {
+        if (c.object) { g_quitNext.emplace_back(); g_quitNext.back().Set(c.object); }
+        return sg::Verdict::Cancel;
+    }
     const std::wstring key = KeyOf(device);
     if (!key.empty()) g_myOpen.insert(key);
     return sg::Verdict::Run;
@@ -555,7 +578,8 @@ sg::Verdict OnUiOpenPre(const sg::Call& c) {
 
 sg::Verdict OnUiQuitPre(const sg::Call& c) {
     auto* s = Live();
-    if (s && c.object) ReleaseHere(s, MD::DeviceOfInterface(c.object));
+    // Our own quit of a refused interface releases nothing: this player never held the device.
+    if (s && c.object && !c.fromOurCode) ReleaseHere(s, MD::DeviceOfInterface(c.object));
     return sg::Verdict::Run;
 }
 
@@ -588,6 +612,7 @@ void Tick() {
                         rows[i]->Class(), rows[i]->Name());
         }
     }
+    if (!g_quitNext.empty()) QuitRefused();
     auto* s = Live();
     if (!s) return;
     const uint64_t now = NowMs();
@@ -694,6 +719,7 @@ void OnPeerGone(uint8_t slot) {
 }
 
 void OnDisconnect() {
+    QuitRefused();   // a refusal in the last tick still hands the controls back
     g_asm.Clear();
     g_dev.clear();
     g_myOpen.clear();

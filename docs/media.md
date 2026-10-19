@@ -65,7 +65,9 @@ holds the owner's screen back.
 
 Only one player uses a device at a time, as with the base laptop. Opening a TV's or a radio's interface
 asks the host for it: the host keeps each device's owner and holder, and a device in another player's
-hands refuses the interface and its `openLink` with "This TV is being used by <name>." in the chat. Closing
+hands refuses the interface and its `openLink` with "This TV is being used by <name>." in the chat; the
+device has already put the player in its interface mode by then, so the refused interface's own `quit`
+runs on the next tick and hands the controls back. Closing
 the interface frees it; the host also frees a holder that has said nothing for eight seconds, and a player
 who leaves frees what they held and hands what they owned to the host. `fin` runs only on the owner's copy
 (`coop/media/media_playback`).
