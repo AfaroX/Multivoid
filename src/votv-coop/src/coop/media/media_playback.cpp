@@ -90,7 +90,9 @@ struct Dev {
     uint64_t recvMs = 0;
     uint32_t appliedSeq = 0;
     uint64_t openedMs = 0, commandMs = 0;
+    uint64_t claimedMs = 0;       // CLIENT: when this peer claimed it; a state older than the claim may still be in flight
 };
+constexpr uint64_t kClaimPendingMs = 2000;
 
 std::atomic<coop::net::Session*> g_session{nullptr};
 coop::blob_chunks::Assembler g_asm;
@@ -98,6 +100,9 @@ uint32_t g_seq = 1, g_maxSeq = 0;
 bool g_watched[8] = {}, g_saidLive[8] = {};
 std::map<std::wstring, Dev> g_dev;
 std::set<std::wstring> g_myOpen;   // devices whose interface this peer has open
+// The interfaces this player has open, by device: a refusal that arrives later closes the right one, and one
+// that went away without its quit releases.
+std::map<std::wstring, ue_wrap::CachedObjRef> g_openWidget;
 uint64_t g_nextPoll = 0, g_nextScan = 0, g_nextSweep = 0;
 std::wstring g_folderNorm;         // the asset folder, normalised, for the wire form
 
@@ -234,8 +239,17 @@ void SendStates(coop::net::Session* s, int slot, const std::vector<std::wstring>
     std::vector<uint8_t> b;
     PutU8(b, kOpState);
     std::vector<const std::pair<const std::wstring, Dev>*> rows;
-    for (const auto& kv : g_dev)
-        if (keys.empty() || std::find(keys.begin(), keys.end(), kv.first) != keys.end()) rows.push_back(&kv);
+    for (const auto& kv : g_dev) {
+        if (!keys.empty() && std::find(keys.begin(), keys.end(), kv.first) == keys.end()) continue;
+        // PutStr caps a string at 2048 bytes; a link past that would arrive cut and break the whole message.
+        if (coop::text::ToUtf8Exact(kv.second.st.link).size() > 2048 ||
+            coop::text::ToUtf8Exact(kv.second.st.name).size() > 2048) {
+            static bool sSaid = false;
+            if (!sSaid) { sSaid = true; UE_LOGW("media_playback: a link over 2 KB is not sent -- '%ls'", kv.first.c_str()); }
+            continue;
+        }
+        rows.push_back(&kv);
+    }
     if (rows.empty()) return;
     if (rows.size() > 255) rows.resize(255);
     PutU8(b, static_cast<uint8_t>(rows.size()));
@@ -310,6 +324,7 @@ bool ClaimHere(coop::net::Session* s, void* actor, bool hold) {
         // Taken here at once; the host's answer corrects it if another player got there first.
         if (d->owner != me) TakeOwnCopy(*d);
         d->owner = me;
+        d->claimedMs = now;
     }
     if (hold) d->holder = me;
     return true;
@@ -321,6 +336,7 @@ void ReleaseHere(coop::net::Session* s, void* actor) {
     // Sent whenever this player's interface on the device closes, whatever a crossing state said of the
     // holder: the host ignores a release from one that does not hold it.
     g_myOpen.erase(key);
+    g_openWidget.erase(key);
     if (IsHost(s)) { HostRelease(s, key, 0); return; }
     auto it = g_dev.find(key);
     if (it != g_dev.end() && it->second.holder == Me(s)) it->second.holder = kNoSlot;
@@ -361,8 +377,12 @@ void OwnerPoll(coop::net::Session* s, uint64_t now) {
         if (d.owner != me) continue;
         void* actor = coop::prop_key_index::Find(key);
         void* player = actor ? MD::PlayerOf(actor) : nullptr;
-        if (!player) continue;
         const bool open = g_myOpen.count(key) != 0;
+        if (!player) {
+            // No media player to speak for, but an open interface still tells the host this player is there.
+            if (open && !IsHost(s) && now - d.sentMs >= kBeatMs) { d.sentMs = now; SendClaim(s, key, /*hold=*/true); }
+            continue;
+        }
         if (d.have && !d.st.link.empty() && d.appliedSeq != d.st.openSeq) {
             // The link this copy now speaks for has not been opened here: open it once the pool has it, and
             // say nothing of a copy that still plays something else. The interface's beat still goes out.
@@ -547,16 +567,37 @@ sg::Verdict OnFinPre(const sg::Call& c) {
 // controls back (it sets no interface and hides itself), and it runs after the device's use has returned.
 std::vector<ue_wrap::CachedObjRef> g_quitNext;
 
+std::set<void*> g_quitting;   // the widgets QuitRefused is closing now: their quit releases nothing
+
+void QueueQuit(void* widget) {
+    if (!widget) return;
+    for (const ue_wrap::CachedObjRef& r : g_quitNext) if (r.Raw() == widget) return;
+    g_quitNext.emplace_back();
+    g_quitNext.back().Set(widget);
+}
+
 void QuitRefused() {
-    for (ue_wrap::CachedObjRef& r : g_quitNext) {
+    std::vector<ue_wrap::CachedObjRef> list;
+    list.swap(g_quitNext);   // a quit that queues another runs it next tick, not inside this loop
+    for (ue_wrap::CachedObjRef& r : list) {
         void* widget = r.Get();
         if (!widget) continue;
         void* fn = R::FindDispatchFunctionCached(R::ClassOf(widget), L"quit");
         if (!fn) continue;
         ue_wrap::ParamFrame f(fn);
+        g_quitting.insert(widget);
         if (f.valid()) ue_wrap::Call(widget, f);
+        g_quitting.erase(widget);
     }
-    g_quitNext.clear();
+}
+
+// Still on screen: an interface the game took down some other way is out of the viewport.
+bool WidgetShown(void* widget) {
+    void* fn = widget ? R::FindDispatchFunctionCached(R::ClassOf(widget), L"IsInViewport") : nullptr;
+    if (!fn) return widget != nullptr;
+    ue_wrap::ParamFrame f(fn);
+    if (!f.valid() || !ue_wrap::Call(widget, f)) return true;
+    return f.Get<bool>(L"ReturnValue");
 }
 
 sg::Verdict OnUiOpenPre(const sg::Call& c) {
@@ -568,18 +609,21 @@ sg::Verdict OnUiOpenPre(const sg::Call& c) {
     std::memcpy(&device, c.locals + off, sizeof(device));
     if (!device || MD::KindOf(device) == MD::Kind::None) return sg::Verdict::Run;
     if (!ClaimHere(s, device, /*hold=*/true)) {
-        if (c.object) { g_quitNext.emplace_back(); g_quitNext.back().Set(c.object); }
+        QueueQuit(c.object);
         return sg::Verdict::Cancel;
     }
     const std::wstring key = KeyOf(device);
-    if (!key.empty()) g_myOpen.insert(key);
+    if (!key.empty()) {
+        g_myOpen.insert(key);
+        if (c.object) g_openWidget[key].Set(c.object);
+    }
     return sg::Verdict::Run;
 }
 
 sg::Verdict OnUiQuitPre(const sg::Call& c) {
     auto* s = Live();
     // Our own quit of a refused interface releases nothing: this player never held the device.
-    if (s && c.object && !c.fromOurCode) ReleaseHere(s, MD::DeviceOfInterface(c.object));
+    if (s && c.object && !g_quitting.count(c.object)) ReleaseHere(s, MD::DeviceOfInterface(c.object));
     return sg::Verdict::Run;
 }
 
@@ -615,6 +659,24 @@ void Tick() {
     if (!g_quitNext.empty()) QuitRefused();
     auto* s = Live();
     if (!s) return;
+    for (auto it = g_openWidget.begin(); it != g_openWidget.end();) {
+        void* widget = it->second.Get();
+        if (widget && WidgetShown(widget)) { ++it; continue; }
+        // Closed some other way -- a death, a level change -- with no quit: the device is released.
+        const std::wstring key = it->first;
+        it = g_openWidget.erase(it);
+        if (g_myOpen.erase(key)) {
+            if (IsHost(s)) HostRelease(s, key, 0);
+            else {
+                auto d = g_dev.find(key);
+                if (d != g_dev.end() && d->second.holder == Me(s)) d->second.holder = kNoSlot;
+                std::vector<uint8_t> b;
+                PutU8(b, kOpRelease);
+                PutStr(b, key);
+                Send(s, 0, b);
+            }
+        }
+    }
     const uint64_t now = NowMs();
     if (now >= g_nextSweep) {
         g_nextSweep = now + 1000;
@@ -672,12 +734,30 @@ void OnChunk(const coop::net::BlobChunkPayload& p, uint8_t senderSlot) {
                 relay.push_back(key);
                 continue;
             }
+            // A state sent before the host saw this peer's claim says the old owner still has it: the claim
+            // stands until the host answers, unless that state names another player holding it (a refusal).
+            if (d->claimedMs && now - d->claimedMs < kClaimPendingMs && owner != me &&
+                (holder == kNoSlot || holder == me))
+                continue;
+            if (owner == me) d->claimedMs = 0;
             d->owner = owner;
             d->holder = holder;
+            // The host gave the device to another player while this one's interface is open on it: close it.
+            if (holder != kNoSlot && holder != me && g_myOpen.count(key)) {
+                g_myOpen.erase(key);
+                auto w = g_openWidget.find(key);
+                if (w != g_openWidget.end()) {
+                    if (void* widget = w->second.Get()) {
+                        QueueQuit(widget);
+                        Note(key, holder, coop::prop_key_index::Find(key));
+                    }
+                    g_openWidget.erase(w);
+                }
+            }
             if (owner == me) continue;   // this peer's own copy is the one that plays
             d->st = std::move(st);
             d->recvMs = now;
-            d->have = true;
+            d->have = !d->st.link.empty();
         }
         if (host && !relay.empty()) SendStates(s, -1, relay);
         return;
@@ -720,6 +800,8 @@ void OnPeerGone(uint8_t slot) {
 
 void OnDisconnect() {
     QuitRefused();   // a refusal in the last tick still hands the controls back
+    g_openWidget.clear();
+    g_quitting.clear();
     g_asm.Clear();
     g_dev.clear();
     g_myOpen.clear();

@@ -125,6 +125,9 @@ std::map<std::pair<int, std::wstring>, uint64_t> g_ownHash; // this peer's own f
 std::vector<Out> g_out;
 std::map<uint64_t, uint64_t> g_wantedAt;                     // hash -> when this peer last asked
 std::set<uint64_t> g_failed, g_conflict;
+std::map<uint64_t, uint64_t> g_failedAt;                     // hash -> when it failed; retried after kRetryFailedMs
+constexpr uint64_t kRetryFailedMs = 60000;
+std::vector<std::pair<int, uint64_t>> g_waitOut;            // (slot, hash) asked for while that slot had its fill
 std::atomic<uint64_t> g_panelSeen{0}, g_lastTick{0};
 std::atomic<bool> g_offlinePosted{false};
 uint64_t g_nextRelist = 0, g_reimportAt = 0, g_lastReimport = 0, g_nextSweep = 0;
@@ -313,7 +316,12 @@ void StartOut(int slot, const Entry& e) {
         if (o.slot == slot && o.hash == e.hash) return;   // already on its way
         if (o.slot == slot) ++mine;
     }
-    if (mine >= kMaxOutPerSlot) return;                    // the asker asks again; the queue stays short
+    if (mine >= kMaxOutPerSlot) {
+        // Queued, not dropped: the asker does not ask again while its transfer entry waits.
+        for (const auto& w : g_waitOut) if (w.first == slot && w.second == e.hash) return;
+        g_waitOut.emplace_back(slot, e.hash);
+        return;
+    }
     Out o;
     o.slot = slot;
     o.hash = e.hash;
@@ -361,13 +369,25 @@ void FetchMissing(coop::net::Session* s) {
     if (s->role() == coop::net::Role::Host) return;
     const uint64_t now = NowMs();
     for (const Entry& e : g_pool) {
-        if (!e.ready || HaveLocal(e) || g_failed.count(e.hash)) continue;
+        if (!e.ready || HaveLocal(e)) continue;
+        if (g_failed.count(e.hash)) {
+            auto f = g_failedAt.find(e.hash);
+            if (f != g_failedAt.end() && now - f->second < kRetryFailedMs) continue;
+            g_failed.erase(e.hash);   // a failure a minute old is tried again
+            g_failedAt.erase(e.hash);
+        }
         if (NameTaken(e)) { g_conflict.insert(e.hash); continue; }
+        auto w = g_wantedAt.find(e.hash);
         {
             std::lock_guard<std::mutex> lk(g_inMu);
-            if (g_in.count(e.hash)) continue;
+            auto in = g_in.find(e.hash);
+            if (in != g_in.end()) {
+                // Asked for and nothing came: the sender dropped the want. Ask again.
+                if (in->second.next != 0 || w == g_wantedAt.end() || now - w->second < kRewantMs) continue;
+                DropIn(in->second);
+                g_in.erase(in);
+            }
         }
-        auto w = g_wantedAt.find(e.hash);
         if (w != g_wantedAt.end() && now - w->second < kRewantMs) continue;
         g_wantedAt[e.hash] = now;
         Expect(e, 0, false);
@@ -598,6 +618,15 @@ void TakeDone(coop::net::Session* s) {
         g_wantedAt.erase(d.hash);
         if (d.ok) { any = true; continue; }
         g_failed.insert(d.hash);
+        g_failedAt[d.hash] = NowMs();
+        // HOST: a client's upload that failed leaves the pool, so its owner can share it again.
+        if (s->role() == coop::net::Role::Host) {
+            const size_t before = g_pool.size();
+            g_pool.erase(std::remove_if(g_pool.begin(), g_pool.end(),
+                                        [&](const Entry& e) { return e.hash == d.hash && !e.ready; }),
+                         g_pool.end());
+            if (g_pool.size() != before) { g_failed.erase(d.hash); g_failedAt.erase(d.hash); Broadcast(); }
+        }
         UE_LOGW("media_pool: a file did not arrive whole (%ls)", d.why.c_str());
         Status(L"A shared file failed: " + d.why);
     }
@@ -762,6 +791,16 @@ void Tick() {
         Relist();
         FetchMissing(s);
     }
+    // A missing file is asked for again while the panel is closed too, so a want that was dropped heals.
+    static uint64_t sNextFetch = 0;
+    if (now >= sNextFetch) { sNextFetch = now + kRewantMs; FetchMissing(s); }
+    // The wants that waited for a slot's transfer to finish.
+    if (!g_waitOut.empty()) {
+        std::vector<std::pair<int, uint64_t>> waiting;
+        waiting.swap(g_waitOut);
+        for (const auto& [slot, hash] : waiting)
+            if (const Entry* e = FindByHash(hash)) StartOut(slot, *e);
+    }
     PumpOut(s);
     if (g_reimportAt && now >= g_reimportAt && now - g_lastReimport >= kReimportGapMs) {
         g_reimportAt = 0;
@@ -866,6 +905,9 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
 void OnPeerGone(uint8_t slot) {
     g_asm.ClearSlot(slot);
     g_out.erase(std::remove_if(g_out.begin(), g_out.end(), [&](const Out& o) { return o.slot == slot; }), g_out.end());
+    g_waitOut.erase(std::remove_if(g_waitOut.begin(), g_waitOut.end(),
+                                   [&](const std::pair<int, uint64_t>& w) { return w.first == slot; }),
+                    g_waitOut.end());
     {
         std::lock_guard<std::mutex> lk(g_inMu);
         for (auto it = g_in.begin(); it != g_in.end();) {
@@ -895,6 +937,8 @@ void OnDisconnect() {
     g_pool.clear();
     g_wantedAt.clear();
     g_failed.clear();
+    g_failedAt.clear();
+    g_waitOut.clear();
     g_conflict.clear();
     g_rxPages.clear();
     g_rxGen = 0;

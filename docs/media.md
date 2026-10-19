@@ -27,7 +27,9 @@ in a frame, is shared by itself, so nobody presses Share for it and nobody confi
 off the game thread and offers it; the host keeps the pool -- kind, name, size and hash per file -- and
 sends it to every peer on each change and to a joiner at its world-ready. A client's share uploads the
 file to the host first, and the host serves every copy from its own disk. A peer that lacks a pooled
-file asks for it. Files travel as `MediaChunk` pieces of 56 KB on the Media lane, the lowest of the
+file asks for it, again every 10 s while nothing arrives; a want past the sender's two transfers per peer
+waits for one to finish, and a file that failed is tried again after a minute. On the host, a client's
+upload that failed leaves the pool, so its owner can share it again. Files travel as `MediaChunk` pieces of 56 KB on the Media lane, the lowest of the
 connection's four, so a video never delays a gameplay message; the transport's backpressure paces them.
 A piece is written to `multivoid-incoming` under the asset folder, outside every kind's folder (the game's
 import lists every file in the TV and radio folders), and a finished file is checked against its size
@@ -67,8 +69,9 @@ Only one player uses a device at a time, as with the base laptop. Opening a TV's
 asks the host for it: the host keeps each device's owner and holder, and a device in another player's
 hands refuses the interface and its `openLink` with "This TV is being used by <name>." in the chat; the
 device has already put the player in its interface mode by then, so the refused interface's own `quit`
-runs on the next tick and hands the controls back. Closing
-the interface frees it; the host also frees a holder that has said nothing for eight seconds, and a player
+runs on the next tick and hands the controls back. A client's own pick stands for 2 s against a state the
+host sent before it saw the claim, and an interface open on a device the host gave another player closes.
+Closing the interface frees it, and so does an interface the game took off the screen without its `quit`; the host also frees a holder that has said nothing for eight seconds, and a player
 who leaves frees what they held and hands what they owned to the host. `fin` runs only on the owner's copy
 (`coop/media/media_playback`).
 
